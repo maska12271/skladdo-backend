@@ -1,0 +1,6 @@
+2026-05-26 19:16:50.927309+03:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "TENDER_PARTICIPANTS" not found; SQL statement:
+select tp1_0.id,tp1_0.manufacturer_name,tp1_0.notes,tp1_0.offered_price,tp1_0.tender_id,tp1_0.winner from tender_participants tp1_0 where tp1_0.tender_id=? [42102-240]
+2026-05-26 19:16:52.658074+03:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "TENDER_PARTICIPANTS" not found; SQL statement:
+select tp1_0.id,tp1_0.manufacturer_name,tp1_0.notes,tp1_0.offered_price,tp1_0.tender_id,tp1_0.winner from tender_participants tp1_0 where tp1_0.tender_id=? [42102-240]

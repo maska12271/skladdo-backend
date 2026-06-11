@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"D:\\\\Projects\\\\tender-frontend\")",
+      "Bash(./mvnw.cmd -q -DskipTests compile)",
+      "Bash(where mvn *)",
+      "Bash(where java *)",
+      "Bash(java -version)",
+      "Read(//c/Users/misha/.jdks/**)",
+      "Read(//c/Program Files/JetBrains/**)",
+      "Read(//c/Users/misha/AppData/Local/Programs/**)",
+      "Read(//c/Users/misha/.m2/wrapper/dists/**)"
+    ]
+  }
+}
