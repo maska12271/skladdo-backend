@@ -6,9 +6,12 @@ import com.example.tenderapp.dto.UpdatePurchaseOrderRequest;
 import com.example.tenderapp.exception.ResourceNotFoundException;
 import com.example.tenderapp.model.Manufacturer;
 import com.example.tenderapp.model.OrderStatus;
+import com.example.tenderapp.model.OrderStatusChange;
+import com.example.tenderapp.model.OrderType;
 import com.example.tenderapp.model.Product;
 import com.example.tenderapp.model.PurchaseOrder;
 import com.example.tenderapp.model.PurchaseOrderItem;
+import com.example.tenderapp.repository.OrderStatusChangeRepository;
 import com.example.tenderapp.repository.PurchaseOrderRepository;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
@@ -28,15 +31,19 @@ public class PurchaseOrderService {
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final ManufacturerService manufacturerService;
     private final ProductService productService;
+    private final OrderStatusChangeRepository statusChangeRepository;
 
     public PurchaseOrderService(PurchaseOrderRepository purchaseOrderRepository,
                                 ManufacturerService manufacturerService,
-                                ProductService productService) {
+                                ProductService productService,
+                                OrderStatusChangeRepository statusChangeRepository) {
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.manufacturerService = manufacturerService;
         this.productService = productService;
+        this.statusChangeRepository = statusChangeRepository;
     }
 
+    @Transactional(readOnly = true)
     public Page<PurchaseOrder> findAll(Long manufacturerId, OrderStatus status, LocalDate dateFrom, LocalDate dateTo, Pageable pageable) {
         Specification<PurchaseOrder> specification = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
@@ -57,12 +64,24 @@ public class PurchaseOrderService {
             return cb.and(predicates.toArray(new Predicate[0]));
         };
 
-        return purchaseOrderRepository.findAll(specification, pageable);
+        Page<PurchaseOrder> page = purchaseOrderRepository.findAll(specification, pageable);
+        // Initialize the lazy item collections before the transaction closes so they serialize
+        // into the JSON response (open-in-view is disabled).
+        page.forEach(order -> order.getItems().size());
+        return page;
     }
 
+    @Transactional(readOnly = true)
     public PurchaseOrder findById(Long id) {
-        return purchaseOrderRepository.findById(id)
+        PurchaseOrder order = purchaseOrderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Purchase order not found with id: " + id));
+        order.getItems().size(); // initialize lazy items for serialization
+        return order;
+    }
+
+    // Stock is added to the warehouse only when the order is shipped (received) or closed.
+    private static boolean isStockAffecting(OrderStatus status) {
+        return status == OrderStatus.SHIPPED || status == OrderStatus.CLOSED;
     }
 
     @Transactional
@@ -83,16 +102,21 @@ public class PurchaseOrderService {
                 request.getItems()
         );
 
-        increaseStockForItems(purchaseOrder.getItems());
+        if (isStockAffecting(purchaseOrder.getStatus())) {
+            increaseStockForItems(purchaseOrder.getItems());
+        }
 
-        return purchaseOrderRepository.save(purchaseOrder);
+        PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
+        recordStatusChange(saved.getId(), null, saved.getStatus());
+        return saved;
     }
 
     @Transactional
     public PurchaseOrder update(Long id, UpdatePurchaseOrderRequest request) {
         PurchaseOrder purchaseOrder = findById(id);
 
-        decreaseStockForItems(purchaseOrder.getItems());
+        OrderStatus oldStatus = purchaseOrder.getStatus();
+        List<PurchaseOrderItem> oldItems = new ArrayList<>(purchaseOrder.getItems());
 
         fillPurchaseOrderFromRequest(
                 purchaseOrder,
@@ -108,15 +132,32 @@ public class PurchaseOrderService {
                 request.getItems()
         );
 
-        increaseStockForItems(purchaseOrder.getItems());
+        OrderStatus newStatus = purchaseOrder.getStatus();
 
-        return purchaseOrderRepository.save(purchaseOrder);
+        // Reverse the old stock increase if the order was previously affecting stock.
+        if (isStockAffecting(oldStatus)) {
+            decreaseStockForItems(oldItems);
+        }
+        // Apply a new stock increase if the order is now affecting stock.
+        if (isStockAffecting(newStatus)) {
+            increaseStockForItems(purchaseOrder.getItems());
+        }
+
+        PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
+        if (oldStatus != newStatus) {
+            recordStatusChange(saved.getId(), oldStatus, newStatus);
+        }
+        return saved;
     }
 
     @Transactional
     public void delete(Long id) {
         PurchaseOrder purchaseOrder = findById(id);
-        decreaseStockForItems(purchaseOrder.getItems());
+        // Only remove stock if it was actually added (order was shipped/closed).
+        if (isStockAffecting(purchaseOrder.getStatus())) {
+            decreaseStockForItems(purchaseOrder.getItems());
+        }
+        statusChangeRepository.deleteByOrderTypeAndOrderId(OrderType.PURCHASE, id);
         purchaseOrderRepository.delete(purchaseOrder);
     }
 
@@ -172,6 +213,32 @@ public class PurchaseOrderService {
         purchaseOrder.getItems().addAll(items);
         purchaseOrder.setSubtotalAmount(subtotal);
         purchaseOrder.setTotalAmount(subtotal.add(purchaseOrder.getDeliveryPrice()));
+    }
+
+    @Transactional
+    public PurchaseOrder updateStatus(Long id, OrderStatus newStatus) {
+        PurchaseOrder order = findById(id);
+        OrderStatus oldStatus = order.getStatus();
+        if (oldStatus == newStatus) return order;
+        if (isStockAffecting(oldStatus)) {
+            decreaseStockForItems(new ArrayList<>(order.getItems()));
+        }
+        order.setStatus(newStatus);
+        if (isStockAffecting(newStatus)) {
+            increaseStockForItems(order.getItems());
+        }
+        PurchaseOrder saved = purchaseOrderRepository.save(order);
+        recordStatusChange(saved.getId(), oldStatus, newStatus);
+        return saved;
+    }
+
+    private void recordStatusChange(Long orderId, OrderStatus from, OrderStatus to) {
+        OrderStatusChange change = new OrderStatusChange();
+        change.setOrderType(OrderType.PURCHASE);
+        change.setOrderId(orderId);
+        change.setFromStatus(from);
+        change.setToStatus(to);
+        statusChangeRepository.save(change);
     }
 
     private void increaseStockForItems(List<PurchaseOrderItem> items) {

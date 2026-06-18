@@ -1,8 +1,12 @@
 package com.example.tenderapp.controller;
 
 import com.example.tenderapp.dto.CreateUserRequest;
+import com.example.tenderapp.dto.ModulePermissionDto;
+import com.example.tenderapp.dto.UpdatePermissionsRequest;
 import com.example.tenderapp.dto.UpdateUserRequest;
+import com.example.tenderapp.dto.UserDetailsDto;
 import com.example.tenderapp.dto.UserDto;
+import com.example.tenderapp.service.UserAnalyticsService;
 import com.example.tenderapp.service.UserService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -22,14 +26,26 @@ import java.util.List;
 public class UserController {
 
     private final UserService userService;
+    private final UserAnalyticsService userAnalyticsService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, UserAnalyticsService userAnalyticsService) {
         this.userService = userService;
+        this.userAnalyticsService = userAnalyticsService;
     }
 
     @GetMapping
     public List<UserDto> getAll() {
         return userService.findAllForCurrentCompany();
+    }
+
+    @GetMapping("/{id}")
+    public UserDto getById(@PathVariable Long id) {
+        return userService.findOne(id);
+    }
+
+    @GetMapping("/{id}/details")
+    public UserDetailsDto getDetails(@PathVariable Long id) {
+        return userAnalyticsService.getDetails(id);
     }
 
     @PostMapping
@@ -55,5 +71,16 @@ public class UserController {
     @PutMapping("/{id}/unarchive")
     public UserDto unarchive(@PathVariable Long id) {
         return userService.setArchived(id, false);
+    }
+
+    @GetMapping("/{id}/permissions")
+    public List<ModulePermissionDto> getPermissions(@PathVariable Long id) {
+        return userService.getPermissions(id);
+    }
+
+    @PutMapping("/{id}/permissions")
+    public List<ModulePermissionDto> updatePermissions(@PathVariable Long id,
+                                                       @Valid @RequestBody UpdatePermissionsRequest request) {
+        return userService.updatePermissions(id, request);
     }
 }

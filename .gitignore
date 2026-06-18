@@ -31,3 +31,14 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Runtime artifacts ###
+# H2 trace/lock files are regenerated at runtime — only the data file (data/tenderdb.mv.db) is
+# committed so everyone gets the same seeded demo dataset.
+data/*.trace.db
+data/*.lock.db
+*.log
+
+# User-uploaded files are not part of the seeded dataset; keep the folder, ignore its contents.
+/uploads/*
+!/uploads/.gitkeep

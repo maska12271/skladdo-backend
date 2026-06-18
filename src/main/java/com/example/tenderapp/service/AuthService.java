@@ -20,13 +20,16 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final UserRepository userRepository;
+    private final PermissionService permissionService;
 
     public AuthService(AuthenticationManager authenticationManager,
                        JwtService jwtService,
-                       UserRepository userRepository) {
+                       UserRepository userRepository,
+                       PermissionService permissionService) {
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.userRepository = userRepository;
+        this.permissionService = permissionService;
     }
 
     public LoginResponse login(LoginRequest request) {
@@ -38,12 +41,12 @@ public class AuthService {
 
         User user = userRepository.findByEmail(userDetails.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        return new LoginResponse(token, UserDto.from(user));
+        return new LoginResponse(token, UserDto.from(user, permissionService.permissionMapFor(user)));
     }
 
     public UserDto currentUser() {
         User user = userRepository.findById(SecurityUtil.currentUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        return UserDto.from(user);
+        return UserDto.from(user, permissionService.permissionMapFor(user));
     }
 }

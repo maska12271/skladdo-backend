@@ -95,7 +95,7 @@ public class ProductService {
         product.setSize(updatedProduct.getSize());
         product.setUnit(updatedProduct.getUnit());
         product.setDescription(updatedProduct.getDescription());
-        product.setImageUrl(updatedProduct.getImageUrl());
+        product.setImageUrls(updatedProduct.getImageUrls() == null ? new ArrayList<>() : updatedProduct.getImageUrls());
         product.setPrice(updatedProduct.getPrice());
         product.setStockQuantity(updatedProduct.getStockQuantity() == null ? 0 : updatedProduct.getStockQuantity());
         product.setMinimumStock(updatedProduct.getMinimumStock() == null ? 0 : updatedProduct.getMinimumStock());

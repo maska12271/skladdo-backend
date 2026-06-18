@@ -1,11 +1,14 @@
 package com.example.tenderapp.service;
 
 import com.example.tenderapp.dto.CreateUserRequest;
+import com.example.tenderapp.dto.ModulePermissionDto;
+import com.example.tenderapp.dto.UpdatePermissionsRequest;
 import com.example.tenderapp.dto.UpdateUserRequest;
 import com.example.tenderapp.dto.UserDto;
 import com.example.tenderapp.exception.ForbiddenException;
 import com.example.tenderapp.exception.ResourceNotFoundException;
 import com.example.tenderapp.model.Company;
+import com.example.tenderapp.model.PermissionModule;
 import com.example.tenderapp.model.Role;
 import com.example.tenderapp.model.User;
 import com.example.tenderapp.repository.CompanyRepository;
@@ -14,6 +17,7 @@ import com.example.tenderapp.security.SecurityUtil;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -26,13 +30,16 @@ public class UserService {
     private final UserRepository userRepository;
     private final CompanyRepository companyRepository;
     private final PasswordEncoder passwordEncoder;
+    private final PermissionService permissionService;
 
     public UserService(UserRepository userRepository,
                        CompanyRepository companyRepository,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       PermissionService permissionService) {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.passwordEncoder = passwordEncoder;
+        this.permissionService = permissionService;
     }
 
     public List<UserDto> findAllForCurrentCompany() {
@@ -40,6 +47,11 @@ public class UserService {
                 .stream()
                 .map(UserDto::from)
                 .toList();
+    }
+
+    /** Single user, scoped to the caller's company. Used by the user profile page. */
+    public UserDto findOne(Long id) {
+        return UserDto.from(requireSameCompany(id));
     }
 
     public UserDto create(CreateUserRequest request) {
@@ -63,7 +75,12 @@ public class UserService {
         user.setActive(true);
         user.setArchived(false);
 
-        return UserDto.from(userRepository.save(user));
+        User saved = userRepository.save(user);
+        // A brand-new regular user starts with the company default access instead of nothing.
+        if (saved.getRole() == Role.USER) {
+            permissionService.applyDefaultPermissions(saved);
+        }
+        return UserDto.from(saved);
     }
 
     public UserDto update(Long id, UpdateUserRequest request) {
@@ -75,6 +92,8 @@ public class UserService {
             throw new ForbiddenException("A user cannot be promoted to owner");
         }
 
+        boolean wasUser = user.getRole() == Role.USER;
+
         user.setFullName(request.fullName());
         user.setRole(request.role());
 
@@ -85,7 +104,15 @@ public class UserService {
             user.setPasswordHash(passwordEncoder.encode(request.password()));
         }
 
-        return UserDto.from(userRepository.save(user));
+        User saved = userRepository.save(user);
+        // Keep permission rows consistent with the role: a fresh demotion to USER gets the defaults,
+        // a promotion to a manager role drops the now-ignored rows.
+        if (request.role() == Role.USER && !wasUser) {
+            permissionService.applyDefaultPermissions(saved);
+        } else if (request.role() != Role.USER && wasUser) {
+            permissionService.clearPermissions(saved.getId());
+        }
+        return UserDto.from(saved);
     }
 
     public void delete(Long id) {
@@ -94,7 +121,33 @@ public class UserService {
         if (user.getRole() == Role.OWNER) {
             throw new ForbiddenException("The owner account cannot be deleted");
         }
+        permissionService.clearPermissions(user.getId());
         userRepository.delete(user);
+    }
+
+    /**
+     * Returns the full per-module permission set for a user. Owners and administrators are
+     * unrestricted, so every module is reported as full access.
+     */
+    public List<ModulePermissionDto> getPermissions(Long id) {
+        User user = requireSameCompany(id);
+        if (user.getRole() != Role.USER) {
+            return Arrays.stream(PermissionModule.values()).map(ModulePermissionDto::all).toList();
+        }
+        return permissionService.permissionsFor(user.getId());
+    }
+
+    /**
+     * Overwrites a user's module permissions. Only {@link Role#USER} accounts can be restricted -
+     * owners and administrators are always full-access.
+     */
+    public List<ModulePermissionDto> updatePermissions(Long id, UpdatePermissionsRequest request) {
+        User user = requireSameCompany(id);
+        if (user.getRole() != Role.USER) {
+            throw new ForbiddenException("Permissions can only be set for regular user accounts");
+        }
+        permissionService.replacePermissions(user, request.permissions());
+        return permissionService.permissionsFor(user.getId());
     }
 
     public UserDto setArchived(Long id, boolean archived) {

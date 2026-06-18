@@ -5,6 +5,7 @@ import com.example.tenderapp.service.CategoryService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.*;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -19,6 +20,7 @@ public class CategoryController {
     }
 
     @GetMapping
+    @PreAuthorize("@perm.canReadReference(authentication, 'CATEGORIES')")
     public Page<Category> getAll(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
@@ -31,21 +33,25 @@ public class CategoryController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("@perm.canReadReference(authentication, 'CATEGORIES')")
     public Category getById(@PathVariable Long id) {
         return categoryService.findById(id);
     }
 
     @PostMapping
+    @PreAuthorize("@perm.canCreate(authentication, 'CATEGORIES')")
     public Category create(@Valid @RequestBody Category category) {
         return categoryService.save(category);
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("@perm.canEdit(authentication, 'CATEGORIES')")
     public Category update(@PathVariable Long id, @Valid @RequestBody Category category) {
         return categoryService.update(id, category);
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("@perm.canDelete(authentication, 'CATEGORIES')")
     public void delete(@PathVariable Long id) {
         categoryService.delete(id);
     }

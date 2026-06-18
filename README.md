@@ -19,7 +19,7 @@ It is the backend part of a full‑stack course project and is designed to be us
 - **Tender management**
   - `Tender`, `TenderParticipant`, and `TenderStatus` to model tenders and participants.
 - **Developer tooling**
-  - In‑memory H2 database with H2 console.
+  - File‑based H2 database (persisted under `./data`) preloaded with a realistic demo dataset, plus the H2 console.
   - SpringDoc OpenAPI UI for interactive API documentation.
 
 ## Tech Stack
@@ -80,15 +80,43 @@ The application will start on:
 http://localhost:8080
 ```
 
+### Demo data & login
+
+The repository ships a **file‑based H2 database** (`data/tenderdb.mv.db`) that is already populated with a
+full demo company — *Nordic Trade OÜ* — so everyone who clones the project sees the **same data**:
+
+- 20 users with varied permission profiles
+- 8 categories, 12 manufacturers, 15 clients, 80 products
+- 140 purchase orders, 190 sales orders (attributed to their authors) and 48 tenders with participants
+- ~3 years of history, including low‑stock items for the dashboard
+
+Sign in with any of these accounts:
+
+| Role          | Email                        | Password      |
+|---------------|------------------------------|---------------|
+| Owner         | `owner@demo.com`             | `owner123`    |
+| Administrator | `admin@demo.com`             | `admin123`    |
+| Staff (USER)  | `*.*@nordictrade.ee`         | `password123` |
+
+**Resetting the data:** the `DataInitializer` only seeds when the database is empty (it leaves the bundled
+data untouched on normal startup). To regenerate from scratch, stop the app, delete `data/tenderdb.mv.db`,
+and start it again — it will recreate the demo dataset. Disable seeding entirely with `app.seed.enabled=false`.
+
 ### H2 Console
 
-The project uses H2 in‑memory DB by default. Check `application.properties` for the console path and credentials, then open:
+The database is a file‑based H2 store (`jdbc:h2:file:./data/tenderdb`). Check `application.properties` for the
+console path and credentials, then open:
 
 ```text
 http://localhost:8080/h2-console
 ```
 
 (Adjust URL if you change server port.)
+
+## Frontend
+
+The companion React UI lives in the separate **`tender-frontend`** repository. Run the backend first (so the
+API is available on `http://localhost:8080`), then start the frontend dev server per its own README.
 
 ## API Overview
 

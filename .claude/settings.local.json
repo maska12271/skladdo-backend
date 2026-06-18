@@ -9,7 +9,18 @@
       "Read(//c/Users/misha/.jdks/**)",
       "Read(//c/Program Files/JetBrains/**)",
       "Read(//c/Users/misha/AppData/Local/Programs/**)",
-      "Read(//c/Users/misha/.m2/wrapper/dists/**)"
+      "Read(//c/Users/misha/.m2/wrapper/dists/**)",
+      "Bash(Get-ChildItem -Recurse -Depth 2)",
+      "Bash(Select-Object -First 50)",
+      "PowerShell(.\\\\mvnw.cmd -q -o compile 2>&1)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Users\\\\misha\\\\.jdks\\\\openjdk-26.0.1\"; .\\\\mvnw.cmd -q compile 2>&1 | Select-Object -Last 50)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Users\\\\misha\\\\.jdks\\\\openjdk-26.0.1\"; .\\\\mvnw.cmd -o compile; \"EXITCODE=$LASTEXITCODE\")",
+      "PowerShell($ErrorActionPreference='Continue'; Push-Location \"C:\\\\Users\\\\misha\\\\WebstormProjects\\\\tender-frontend\"; $hasLint = \\(Get-Content package.json -Raw\\) -match '\"lint\"'; if \\($hasLint\\) { npm run lint 2>&1 | Select-Object -Last 40 } else { \"no lint script\" }; \"EXITCODE=$LASTEXITCODE\"; Pop-Location)",
+      "PowerShell($ErrorActionPreference='Continue'; Push-Location \"C:\\\\Users\\\\misha\\\\WebstormProjects\\\\tender-frontend\"; npx eslint src --format=compact 2>&1 | Select-String -Pattern \"Error|Warning\" | ForEach-Object { $_.Line } | Select-Object -First 40; Pop-Location)",
+      "Bash(npm run *)",
+      "Bash(JAVA_HOME=\"C:\\\\Users\\\\misha\\\\.jdks\\\\openjdk-26.0.1\" ./mvnw.cmd -o compile -q)",
+      "Bash(JAVA_HOME=\"C:\\\\Users\\\\misha\\\\.jdks\\\\openjdk-26.0.1\" ./mvnw.cmd -o -q compile)",
+      "Bash(JAVA_HOME=\"C:\\\\Users\\\\misha\\\\.jdks\\\\openjdk-26.0.1\" SPRING_DATASOURCE_URL=\"jdbc:h2:mem:verifydb;DB_CLOSE_DELAY=-1\" SERVER_PORT=0 ./mvnw.cmd -o -q spring-boot:run)"
     ]
   }
 }
