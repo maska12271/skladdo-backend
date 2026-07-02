@@ -54,11 +54,14 @@ public class SalesOrderController {
     @GetMapping
     @PreAuthorize("@perm.canView(authentication, 'SALES_ORDERS')")
     public Page<SalesOrder> getAll(
-            @RequestParam(required = false) Long clientId,
-            @RequestParam(required = false) OrderStatus status,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<Long> clientId,
+            @RequestParam(required = false) List<OrderStatus> status,
             @RequestParam(required = false) Long warehouseId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+            @RequestParam(required = false) List<Long> id,
+            @RequestParam(required = false) List<Long> excludeId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "id") String sortBy,
@@ -66,7 +69,7 @@ public class SalesOrderController {
     ) {
         Sort sort = sortDir.equalsIgnoreCase("desc") ? Sort.by(sortBy).descending() : Sort.by(sortBy).ascending();
         Pageable pageable = PageRequest.of(page, size, sort);
-        return salesOrderService.findAll(clientId, status, warehouseId, dateFrom, dateTo, pageable);
+        return salesOrderService.findAll(search, clientId, status, warehouseId, dateFrom, dateTo, id, excludeId, pageable);
     }
 
     @GetMapping("/{id}")

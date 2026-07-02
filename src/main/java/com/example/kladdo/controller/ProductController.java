@@ -51,10 +51,11 @@ public class ProductController {
     @GetMapping
     @PreAuthorize("@perm.canReadReference(authentication, 'PRODUCTS')")
     public Page<Product> getAll(
-            @RequestParam(required = false) String name,
-            @RequestParam(required = false) Long categoryId,
-            @RequestParam(required = false) Long manufacturerId,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<Long> categoryId,
+            @RequestParam(required = false) List<Long> manufacturerId,
             @RequestParam(required = false) Boolean active,
+            @RequestParam(required = false) List<String> stockStatus,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "id") String sortBy,
@@ -62,7 +63,7 @@ public class ProductController {
     ) {
         Sort sort = sortDir.equalsIgnoreCase("desc") ? Sort.by(sortBy).descending() : Sort.by(sortBy).ascending();
         Pageable pageable = PageRequest.of(page, size, sort);
-        return productService.search(name, categoryId, manufacturerId, active, pageable);
+        return productService.search(search, categoryId, manufacturerId, active, stockStatus, pageable);
     }
 
     @GetMapping("/{id}")

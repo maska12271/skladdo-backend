@@ -10,6 +10,8 @@ import org.springframework.data.domain.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/manufacturers")
 @Tag(name = "Manufacturers")
@@ -27,6 +29,9 @@ public class ManufacturerController {
     @GetMapping
     @PreAuthorize("@perm.canReadReference(authentication, 'MANUFACTURERS')")
     public Page<Manufacturer> getAll(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<Long> categoryId,
+            @RequestParam(required = false) Boolean active,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "id") String sortBy,
@@ -34,7 +39,7 @@ public class ManufacturerController {
     ) {
         Sort sort = sortDir.equalsIgnoreCase("desc") ? Sort.by(sortBy).descending() : Sort.by(sortBy).ascending();
         Pageable pageable = PageRequest.of(page, size, sort);
-        return manufacturerService.findAll(pageable);
+        return manufacturerService.findAll(search, categoryId, active, pageable);
     }
 
     @GetMapping("/{id}")

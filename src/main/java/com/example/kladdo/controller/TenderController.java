@@ -12,6 +12,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/tenders")
 @RequiredArgsConstructor
@@ -22,6 +24,8 @@ public class TenderController {
     @GetMapping
     @PreAuthorize("@perm.canView(authentication, 'TENDERS')")
     public Page<TenderResponseDto> findAll(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<String> status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "id") String sortBy,
@@ -32,7 +36,7 @@ public class TenderController {
                 : Sort.by(sortBy).descending();
 
         Pageable pageable = PageRequest.of(page, size, sort);
-        return tenderService.findAll(pageable);
+        return tenderService.findAll(search, status, pageable);
     }
 
     @GetMapping("/{id}")

@@ -6,13 +6,18 @@ import com.example.kladdo.model.Client;
 import com.example.kladdo.model.Tender;
 import com.example.kladdo.repository.ClientRepository;
 import com.example.kladdo.repository.TenderRepository;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -21,9 +26,32 @@ public class TenderService {
     private final TenderRepository tenderRepository;
     private final ClientRepository clientRepository;
 
+    /**
+     * Paged tender search. Free-text matches title / tender number / customer name / linked client
+     * name; the status filter narrows to the selected statuses.
+     */
     @Transactional(readOnly = true)
-    public Page<TenderResponseDto> findAll(Pageable pageable) {
-        return tenderRepository.findAll(pageable).map(this::toDto);
+    public Page<TenderResponseDto> findAll(String search, List<String> statuses, Pageable pageable) {
+        Specification<Tender> specification = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            if (search != null && !search.isBlank()) {
+                String like = "%" + search.toLowerCase() + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("title")), like),
+                        cb.like(cb.lower(root.get("tenderNumber")), like),
+                        cb.like(cb.lower(root.get("customerName")), like),
+                        cb.like(cb.lower(root.join("client", JoinType.LEFT).get("name")), like)
+                ));
+            }
+            if (statuses != null && !statuses.isEmpty()) {
+                predicates.add(root.get("status").in(statuses));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+
+        return tenderRepository.findAll(specification, pageable).map(this::toDto);
     }
 
     @Transactional(readOnly = true)

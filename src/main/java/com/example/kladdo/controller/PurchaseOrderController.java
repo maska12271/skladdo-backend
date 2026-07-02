@@ -29,6 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/purchase-orders")
@@ -60,8 +61,9 @@ public class PurchaseOrderController {
     @GetMapping
     @PreAuthorize("@perm.canView(authentication, 'PURCHASE_ORDERS')")
     public Page<PurchaseOrder> getAll(
-            @RequestParam(required = false) Long manufacturerId,
-            @RequestParam(required = false) OrderStatus status,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) List<Long> manufacturerId,
+            @RequestParam(required = false) List<OrderStatus> status,
             @RequestParam(required = false) Long warehouseId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
@@ -72,7 +74,7 @@ public class PurchaseOrderController {
     ) {
         Sort sort = sortDir.equalsIgnoreCase("desc") ? Sort.by(sortBy).descending() : Sort.by(sortBy).ascending();
         Pageable pageable = PageRequest.of(page, size, sort);
-        return purchaseOrderService.findAll(manufacturerId, status, warehouseId, dateFrom, dateTo, pageable);
+        return purchaseOrderService.findAll(search, manufacturerId, status, warehouseId, dateFrom, dateTo, pageable);
     }
 
     @GetMapping("/{id}")

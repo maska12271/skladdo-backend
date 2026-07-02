@@ -57,18 +57,35 @@ public class SalesOrderService {
     }
 
     @Transactional(readOnly = true)
-    public Page<SalesOrder> findAll(Long clientId, OrderStatus status, Long warehouseId,
-                                    LocalDate dateFrom, LocalDate dateTo, Pageable pageable) {
+    public Page<SalesOrder> findAll(String search, List<Long> clientIds, List<OrderStatus> statuses,
+                                    Long warehouseId, LocalDate dateFrom, LocalDate dateTo,
+                                    List<Long> ids, List<Long> excludeIds, Pageable pageable) {
         List<Long> accessibleWarehouseIds = warehouseService.getAccessibleWarehouseIds();
 
         Specification<SalesOrder> specification = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
-            if (clientId != null) {
-                predicates.add(cb.equal(root.get("client").get("id"), clientId));
+            if (search != null && !search.isBlank()) {
+                String like = "%" + search.toLowerCase() + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("orderNumber")), like),
+                        cb.like(cb.lower(root.get("client").get("name")), like)
+                ));
             }
-            if (status != null) {
-                predicates.add(cb.equal(root.get("status"), status));
+            if (clientIds != null && !clientIds.isEmpty()) {
+                predicates.add(root.get("client").get("id").in(clientIds));
+            }
+            if (statuses != null && !statuses.isEmpty()) {
+                predicates.add(root.get("status").in(statuses));
+            }
+            // Constrains the result to a caller-supplied id set (and/or excludes one) — used by the list
+            // page's payment-status filter, which resolves matching order ids from the separate billing
+            // summaries. `excludeId` covers "NOT_INVOICED" (orders with no invoice summary at all).
+            if (ids != null && !ids.isEmpty()) {
+                predicates.add(root.get("id").in(ids));
+            }
+            if (excludeIds != null && !excludeIds.isEmpty()) {
+                predicates.add(cb.not(root.get("id").in(excludeIds)));
             }
             if (warehouseId != null) {
                 predicates.add(cb.equal(root.get("warehouse").get("id"), warehouseId));

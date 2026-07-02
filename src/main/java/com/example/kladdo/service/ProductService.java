@@ -11,6 +11,7 @@ import com.example.kladdo.repository.ProductBatchRepository;
 import com.example.kladdo.repository.ProductRepository;
 import com.example.kladdo.repository.TaxRateRepository;
 import com.example.kladdo.repository.WarehouseStockRepository;
+import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -48,21 +49,50 @@ public class ProductService {
         this.productBatchRepository = productBatchRepository;
     }
 
-    public Page<Product> search(String name, Long categoryId, Long manufacturerId, Boolean active, Pageable pageable) {
+    /**
+     * Paged product search with full filter parity for the list page: free-text search across
+     * name / SKU / manufacturer name, multi-select category and manufacturer, active flag, and the
+     * computed stock status (mirrors the frontend's utils/stock.js: out = qty&le;0, low = 0&lt;qty&le;min,
+     * ok = qty&gt;min). Any argument that is null/empty is simply not applied.
+     */
+    public Page<Product> search(String search, List<Long> categoryIds, List<Long> manufacturerIds,
+                                Boolean active, List<String> stockStatuses, Pageable pageable) {
         Specification<Product> specification = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
-            if (name != null && !name.isBlank()) {
-                predicates.add(cb.like(cb.lower(root.get("name")), "%" + name.toLowerCase() + "%"));
+            if (search != null && !search.isBlank()) {
+                String like = "%" + search.toLowerCase() + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("name")), like),
+                        cb.like(cb.lower(root.get("sku")), like),
+                        cb.like(cb.lower(root.get("manufacturer").get("name")), like)
+                ));
             }
-            if (categoryId != null) {
-                predicates.add(cb.equal(root.get("category").get("id"), categoryId));
+            if (categoryIds != null && !categoryIds.isEmpty()) {
+                predicates.add(root.get("category").get("id").in(categoryIds));
             }
-            if (manufacturerId != null) {
-                predicates.add(cb.equal(root.get("manufacturer").get("id"), manufacturerId));
+            if (manufacturerIds != null && !manufacturerIds.isEmpty()) {
+                predicates.add(root.get("manufacturer").get("id").in(manufacturerIds));
             }
             if (active != null) {
                 predicates.add(cb.equal(root.get("active"), active));
+            }
+            if (stockStatuses != null && !stockStatuses.isEmpty()) {
+                Path<Integer> qty = root.get("stockQuantity");
+                Path<Integer> min = root.get("minimumStock");
+                List<Predicate> stockPredicates = new ArrayList<>();
+                for (String status : stockStatuses) {
+                    if ("out".equals(status)) {
+                        stockPredicates.add(cb.lessThanOrEqualTo(qty, 0));
+                    } else if ("low".equals(status)) {
+                        stockPredicates.add(cb.and(cb.greaterThan(qty, 0), cb.lessThanOrEqualTo(qty, min)));
+                    } else if ("ok".equals(status)) {
+                        stockPredicates.add(cb.greaterThan(qty, min));
+                    }
+                }
+                if (!stockPredicates.isEmpty()) {
+                    predicates.add(cb.or(stockPredicates.toArray(new Predicate[0])));
+                }
             }
 
             return cb.and(predicates.toArray(new Predicate[0]));

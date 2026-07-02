@@ -3,9 +3,14 @@ package com.example.kladdo.service;
 import com.example.kladdo.exception.ResourceNotFoundException;
 import com.example.kladdo.model.Client;
 import com.example.kladdo.repository.ClientRepository;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 public class ClientService {
@@ -16,10 +21,39 @@ public class ClientService {
         this.clientRepository = clientRepository;
     }
 
-    public Page<Client> findAll(boolean includeArchived, Pageable pageable) {
-        return includeArchived
-                ? clientRepository.findAll(pageable)
-                : clientRepository.findNotArchived(pageable);
+    /**
+     * Paged client search. Free-text matches name / registration code / email / contact person; the
+     * status filter narrows to active vs archived (a {@code null} archived flag counts as active).
+     * {@code includeArchived} is the base visibility for reference/dropdown callers — when false,
+     * archived clients are hidden regardless of the status filter.
+     */
+    public Page<Client> findAll(String search, List<String> status, boolean includeArchived, Pageable pageable) {
+        Specification<Client> specification = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            if (search != null && !search.isBlank()) {
+                String like = "%" + search.toLowerCase() + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("name")), like),
+                        cb.like(cb.lower(root.get("registrationCode")), like),
+                        cb.like(cb.lower(root.get("email")), like),
+                        cb.like(cb.lower(root.get("contactPerson")), like)
+                ));
+            }
+
+            Predicate notArchived = cb.or(cb.equal(root.get("archived"), false), cb.isNull(root.get("archived")));
+            boolean wantActive = status != null && status.contains("active");
+            boolean wantArchived = status != null && status.contains("archived");
+            if (wantActive ^ wantArchived) { // exactly one selected → narrow to it
+                predicates.add(wantArchived ? cb.equal(root.get("archived"), true) : notArchived);
+            } else if (!includeArchived) {
+                predicates.add(notArchived);
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+
+        return clientRepository.findAll(specification, pageable);
     }
 
     public Client findById(Long id) {

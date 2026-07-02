@@ -57,18 +57,25 @@ public class PurchaseOrderService {
     }
 
     @Transactional(readOnly = true)
-    public Page<PurchaseOrder> findAll(Long manufacturerId, OrderStatus status, Long warehouseId,
-                                       LocalDate dateFrom, LocalDate dateTo, Pageable pageable) {
+    public Page<PurchaseOrder> findAll(String search, List<Long> manufacturerIds, List<OrderStatus> statuses,
+                                       Long warehouseId, LocalDate dateFrom, LocalDate dateTo, Pageable pageable) {
         List<Long> accessibleWarehouseIds = warehouseService.getAccessibleWarehouseIds();
 
         Specification<PurchaseOrder> specification = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
-            if (manufacturerId != null) {
-                predicates.add(cb.equal(root.get("manufacturer").get("id"), manufacturerId));
+            if (search != null && !search.isBlank()) {
+                String like = "%" + search.toLowerCase() + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("orderNumber")), like),
+                        cb.like(cb.lower(root.get("manufacturer").get("name")), like)
+                ));
             }
-            if (status != null) {
-                predicates.add(cb.equal(root.get("status"), status));
+            if (manufacturerIds != null && !manufacturerIds.isEmpty()) {
+                predicates.add(root.get("manufacturer").get("id").in(manufacturerIds));
+            }
+            if (statuses != null && !statuses.isEmpty()) {
+                predicates.add(root.get("status").in(statuses));
             }
             if (warehouseId != null) {
                 predicates.add(cb.equal(root.get("warehouse").get("id"), warehouseId));
