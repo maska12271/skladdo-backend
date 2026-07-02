@@ -1,8 +1,8 @@
-# TenderApp Backend
+# Kladdo Backend
 
-TenderApp is a Spring Boot REST API for managing companies, clients, products, tenders, and related sales/purchase orders in a small business environment.
+Kladdo is a Spring Boot REST API for managing companies, clients, products, tenders, and related sales/purchase orders in a small business environment.
 
-It is the backend part of a full‑stack course project and is designed to be used together with the `tender-frontend` React application.
+It is the backend part of a full‑stack course project and is designed to be used together with the `kladdo-frontend` React application.
 
 ## Features
 
@@ -35,7 +35,7 @@ It is the backend part of a full‑stack course project and is designed to be us
 ## Project Structure
 
 ```text
-src/main/java/com/example/tenderapp
+src/main/java/com/example/kladdo
 ├── config/        # General Spring / OpenAPI configuration
 ├── controller/    # REST controllers (auth, users, clients, tenders, orders, etc.)
 ├── dto/           # Request/response DTOs
@@ -115,7 +115,7 @@ http://localhost:8080/h2-console
 
 ## Frontend
 
-The companion React UI lives in the separate **`tender-frontend`** repository. Run the backend first (so the
+The companion React UI lives in the separate **`kladdo-frontend`** repository. Run the backend first (so the
 API is available on `http://localhost:8080`), then start the frontend dev server per its own README.
 
 ## API Overview

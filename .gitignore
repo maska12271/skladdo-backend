@@ -42,3 +42,5 @@ data/*.lock.db
 # User-uploaded files are not part of the seeded dataset; keep the folder, ignore its contents.
 /uploads/*
 !/uploads/.gitkeep
+# Added by code-review-graph
+.code-review-graph/

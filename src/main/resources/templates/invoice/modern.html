@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <!--
+      Modern layout: a full-width accent banner across the top holding the logo and the invoice meta,
+      then the same body blocks as the other layouts. Rendered by openhtmltopdf (CSS 2.1 only: tables
+      and block boxes, self-closed tags); the accent colour is injected via Thymeleaf CSS inlining.
+    -->
+    <style type="text/css" th:inline="css">
+        @page { size: A4; margin: 1.6cm; }
+        body { font-family: Helvetica, Arial, sans-serif; font-size: 11px; color: #1e293b; }
+        .muted { color: #64748b; }
+        .right { text-align: right; }
+        table { border-collapse: collapse; width: 100%; }
+
+        /* Accent banner (contained within the page margins so multi-page invoices stay tidy) */
+        .banner { background: [(${accent})]; color: #ffffff; padding: 18px 20px; }
+        .banner td { vertical-align: middle; color: #ffffff; }
+        .banner h1 { font-size: 28px; margin: 0; letter-spacing: 2px; font-weight: bold; }
+        .banner .logo { max-height: 52px; }
+        .banner .name { font-size: 18px; font-weight: bold; }
+        .banner .num { font-size: 15px; font-weight: bold; margin-top: 4px; }
+        .banner .meta { font-size: 10px; opacity: 0.9; }
+
+        .parties { margin-top: 28px; }
+        .parties td { vertical-align: top; width: 50%; padding-right: 16px; }
+        .party-label { text-transform: uppercase; font-size: 9px; letter-spacing: 1px; color: [(${accent})]; margin-bottom: 4px; font-weight: bold; }
+        .party-name { font-weight: bold; font-size: 13px; }
+        .party-line { color: #475569; }
+
+        .lines { margin-top: 26px; }
+        .lines th { background: [(${accent})]; color: #ffffff; text-align: left; padding: 9px 10px; font-size: 9px;
+                    text-transform: uppercase; letter-spacing: 0.5px; }
+        .lines td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; }
+        .lines tr:nth-child(even) td { background: #f8fafc; }
+        .lines td.num, .lines th.num { text-align: right; }
+
+        .totals { margin-top: 14px; }
+        .totals td { padding: 4px 10px; }
+        .totals .label { text-align: right; color: #475569; }
+        .totals .val { text-align: right; width: 130px; }
+        .totals .grand .label, .totals .grand .val { font-size: 15px; font-weight: bold; color: #ffffff;
+                    background: [(${accent})]; padding: 8px 10px; }
+
+        .terms { margin-top: 28px; padding: 12px 14px; background: #f8fafc; border-left: 3px solid [(${accent})]; }
+        .terms .party-label { margin-bottom: 6px; }
+        .pay td { vertical-align: top; width: 50%; padding-right: 16px; }
+
+        .notes { margin-top: 20px; }
+        .footer { margin-top: 36px; font-size: 9px; color: #94a3b8; text-align: center; }
+    </style>
+</head>
+<body>
+
+<!-- Accent banner header -->
+<table class="banner">
+    <tr>
+        <td>
+            <img class="logo" th:if="${logoUri != null}" th:src="${logoUri}" alt=""/>
+            <div th:unless="${logoUri != null}" class="name" th:text="${company.name}">Company</div>
+        </td>
+        <td class="right">
+            <h1 th:text="${invoice.prepayment} ? 'PREPAYMENT INVOICE' : 'INVOICE'">INVOICE</h1>
+            <div class="num" th:text="${invoice.invoiceNumber}">INV-000001</div>
+            <div class="meta">Issued <span th:text="${invoice.issueDate}">2026-01-01</span>
+                · Due <span th:text="${invoice.dueDate}">2026-01-15</span></div>
+            <div class="meta">Order <span th:text="${invoice.salesOrder?.orderNumber}">SO-1</span></div>
+        </td>
+    </tr>
+</table>
+
+<!-- From (seller) / Bill to (buyer) -->
+<table class="parties">
+    <tr>
+        <td>
+            <div class="party-label">From</div>
+            <div class="party-name" th:text="${company.name}">Seller</div>
+            <div class="party-line" th:if="${settings.companyAddress != null}" th:text="${settings.companyAddress}"></div>
+            <div class="party-line" th:if="${company.registrationCode != null}">Reg: <span th:text="${company.registrationCode}"></span></div>
+            <div class="party-line" th:if="${settings.vatNumber != null}">VAT: <span th:text="${settings.vatNumber}"></span></div>
+            <div class="party-line" th:if="${settings.companyEmail != null}" th:text="${settings.companyEmail}"></div>
+            <div class="party-line" th:if="${settings.companyPhone != null}" th:text="${settings.companyPhone}"></div>
+        </td>
+        <td>
+            <div class="party-label">Bill to</div>
+            <div class="party-name" th:text="${invoice.clientName}">Buyer</div>
+            <div class="party-line" th:if="${invoice.clientAddress != null}" th:text="${invoice.clientAddress}"></div>
+            <div class="party-line" th:if="${invoice.clientRegistrationCode != null}">Reg: <span th:text="${invoice.clientRegistrationCode}"></span></div>
+            <div class="party-line" th:if="${invoice.clientEmail != null}" th:text="${invoice.clientEmail}"></div>
+        </td>
+    </tr>
+</table>
+
+<!-- Line items -->
+<table class="lines">
+    <thead>
+    <tr>
+        <th>Product</th>
+        <th th:if="${settings.invoiceShowLineSku}">SKU</th>
+        <th class="num">Qty</th>
+        <th class="num">Unit price</th>
+        <th class="num">Discount</th>
+        <th class="num">Tax</th>
+        <th class="num">Line total</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:each="line : ${invoice.items}">
+        <td th:text="${line.productName}">Product</td>
+        <td th:if="${settings.invoiceShowLineSku}" th:text="${line.sku != null ? line.sku : '—'}">SKU</td>
+        <td class="num" th:text="${line.quantity}">1</td>
+        <td class="num" th:text="${#numbers.formatDecimal(line.unitPrice, 1, 2)}">0.00</td>
+        <td class="num" th:text="${line.discountPercent != null and line.discountPercent.signum() > 0 ? #numbers.formatDecimal(line.discountPercent, 1, 1) + '%' : '—'}">—</td>
+        <td class="num" th:text="${line.taxRatePercent != null and line.taxRatePercent.signum() > 0 ? #numbers.formatDecimal(line.taxRatePercent, 1, 1) + '%' : '—'}">—</td>
+        <td class="num" th:text="${#numbers.formatDecimal(line.lineTotal, 1, 2)}">0.00</td>
+    </tr>
+    </tbody>
+</table>
+
+<!-- Totals -->
+<table class="totals">
+    <tr>
+        <td class="label">Subtotal (excl. tax)</td>
+        <td class="val" th:text="${#numbers.formatDecimal(invoice.subtotalAmount, 1, 2)} + ' ' + ${invoice.currency}">0.00 EUR</td>
+    </tr>
+    <tr>
+        <td class="label">Tax</td>
+        <td class="val" th:text="${#numbers.formatDecimal(invoice.taxAmount, 1, 2)} + ' ' + ${invoice.currency}">0.00 EUR</td>
+    </tr>
+    <tr>
+        <td class="label">Delivery</td>
+        <td class="val" th:text="${#numbers.formatDecimal(invoice.deliveryPrice, 1, 2)} + ' ' + ${invoice.currency}">0.00 EUR</td>
+    </tr>
+    <tr class="grand" th:if="${invoice.appliedPrepaymentAmount == null}">
+        <td class="label">Total due (incl. tax)</td>
+        <td class="val" th:text="${#numbers.formatDecimal(invoice.totalAmount, 1, 2)} + ' ' + ${invoice.currency}">0.00 EUR</td>
+    </tr>
+    <!-- A paid prepayment for this order is netted off to leave the balance still owed -->
+    <tr th:if="${invoice.appliedPrepaymentAmount != null}">
+        <td class="label">Total (incl. tax)</td>
+        <td class="val" th:text="${#numbers.formatDecimal(invoice.totalAmount, 1, 2)} + ' ' + ${invoice.currency}">0.00 EUR</td>
+    </tr>
+    <tr th:if="${invoice.appliedPrepaymentAmount != null}">
+        <td class="label">Less: prepayment <span th:text="${invoice.appliedPrepaymentInvoice.invoiceNumber}">INV-0</span></td>
+        <td class="val" th:text="'-' + ${#numbers.formatDecimal(invoice.appliedPrepaymentAmount, 1, 2)} + ' ' + ${invoice.currency}">-0.00 EUR</td>
+    </tr>
+    <tr class="grand" th:if="${invoice.appliedPrepaymentAmount != null}">
+        <td class="label">Balance due</td>
+        <td class="val" th:text="${#numbers.formatDecimal(invoice.totalAmount.subtract(invoice.appliedPrepaymentAmount), 1, 2)} + ' ' + ${invoice.currency}">0.00 EUR</td>
+    </tr>
+</table>
+
+<!-- Payment terms + bank details -->
+<div class="terms" th:if="${settings.invoiceShowPaymentTerms or (settings.invoiceShowBankDetails and (settings.bankName != null or settings.bankIban != null))}">
+    <table class="pay">
+        <tr>
+            <td th:if="${settings.invoiceShowPaymentTerms}">
+                <div class="party-label">Payment terms</div>
+                <div>Due by <strong th:text="${invoice.dueDate}">2026-01-15</strong>.</div>
+                <div th:if="${invoice.penaltyPercent != null and invoice.penaltyPercent.signum() > 0}">
+                    Late payment penalty:
+                    <strong th:text="${#numbers.formatDecimal(invoice.penaltyPercent, 1, 2)} + '%'">0.5%</strong>
+                    per <span th:text="${#strings.toLowerCase(invoice.penaltyPeriod)}">day</span> overdue.
+                </div>
+            </td>
+            <td th:if="${settings.invoiceShowBankDetails and (settings.bankName != null or settings.bankIban != null)}">
+                <div class="party-label">Bank details</div>
+                <div th:if="${settings.bankName != null}" th:text="${settings.bankName}"></div>
+                <div th:if="${settings.bankIban != null}">IBAN: <span th:text="${settings.bankIban}"></span></div>
+            </td>
+        </tr>
+    </table>
+</div>
+
+<!-- Additional information -->
+<div class="notes" th:if="${settings.invoiceShowNotes and invoice.notes != null and !invoice.notes.isEmpty()}">
+    <div class="party-label">Additional information</div>
+    <div th:text="${invoice.notes}"></div>
+</div>
+
+<div class="footer">
+    <span th:if="${footerText != null}" th:text="${footerText}">Thank you for your business.</span>
+    <span th:unless="${footerText != null}">Generated by Kladdo · <span th:text="${company.name}">Company</span></span>
+</div>
+
+</body>
+</html>
