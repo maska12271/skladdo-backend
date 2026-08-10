@@ -275,6 +275,43 @@ class MoneyIntegrationTest extends ApiTestBase {
                 .isEqualByComparingTo("50");
     }
 
+    /**
+     * Regression guard for F-015. Invoice arithmetic and currency conversion were each tested thoroughly in
+     * Stage 4 but never crossed: every invoice test used a base-currency order and every currency test
+     * stopped at the order. An invoice was therefore stamped with the company's base currency while keeping
+     * the order's unconverted foreign amount, so a 1000 USD order printed as "1000.00 EUR" on the PDF - the
+     * templates render {@code totalAmount + ' ' + currency} directly.
+     */
+    @Test
+    @DisplayName("an invoice is denominated in its order's currency, not the company's")
+    void invoiceCarriesTheOrdersCurrency() throws Exception {
+        Shop s = shop();
+
+        long foreign = created(s.owner(), "/api/sales-orders", """
+                {"clientId":%d,"warehouseId":%d,"deliveryPrice":0,"status":"NEW",
+                 "currency":"USD","exchangeRate":2,
+                 "items":[{"productId":%d,"quantity":10,"unitPrice":100}]}
+                """.formatted(s.clientId(), s.warehouseId(), s.productId()));
+        JsonNode foreignInvoice = invoice(s.owner(), foreign, "{}");
+
+        assertThat(foreignInvoice.path("currency").asText())
+                .as("billed in the currency the customer agreed to").isEqualTo("USD");
+        assertThat(foreignInvoice.path("totalAmount").decimalValue())
+                .as("the amount stays in that currency, unconverted").isEqualByComparingTo("1000");
+
+        // A base-currency order is unaffected: no currency on the order still means the company's own.
+        long domestic = order(s, 3, "100", null);
+        JsonNode domesticInvoice = invoice(s.owner(), domestic, "{}");
+        assertThat(domesticInvoice.path("currency").asText()).isEqualTo("EUR");
+        assertThat(domesticInvoice.path("totalAmount").decimalValue()).isEqualByComparingTo("300");
+
+        // And the roll-up still converts both to base correctly - 500 + 300, not 1000 + 300.
+        JsonNode receivables = readJson(mvc.perform(
+                authed(get("/api/dashboard/stats"), s.owner())).andReturn()).path("receivables");
+        assertThat(receivables.path("unpaidTotal").decimalValue())
+                .as("mixed-currency receivables").isEqualByComparingTo("800");
+    }
+
     // -------------------------------------------------------------------------------------------------
     // helpers
     // -------------------------------------------------------------------------------------------------

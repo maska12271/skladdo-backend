@@ -92,7 +92,14 @@ public class InvoiceService {
         invoice.setSalesOrder(order);
         invoice.setStatus(InvoicePaymentStatus.UNPAID);
         invoice.setType(type);
-        invoice.setCurrency(settings.getCurrency());
+        // The order's currency, not the company's. Every amount below is copied from the order without
+        // conversion, so stamping the base currency here labelled a foreign figure with the wrong unit -
+        // a 1000 USD order printed as "1000.00 EUR" on the customer's PDF (finding F-015). The rest of the
+        // system already treats these amounts as the order's currency: DashboardService converts them to
+        // base by dividing by the *order's* exchange rate, which is only correct if that is what they are.
+        invoice.setCurrency(order.getCurrency() != null && !order.getCurrency().isBlank()
+                ? order.getCurrency()
+                : settings.getCurrency());
 
         // Payment terms: request override -> order override -> company settings.
         int termDays = firstNonNull(req.paymentTermDays(), order.getPaymentTermDays(),
