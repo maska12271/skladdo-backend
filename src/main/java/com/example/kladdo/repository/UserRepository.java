@@ -12,7 +12,22 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByEmail(String email);
 
-    long countByCompanyId(Long companyId);
+    /**
+     * Users occupying a plan seat: everyone in the company who is not archived.
+     *
+     * <p>An archived account cannot sign in or do anything until it is unarchived, so it does not consume a
+     * seat - archiving is how you retire someone without destroying the record, and it would be perverse if
+     * the safe option were the one that cost you a seat while deleting was the only way to free one.</p>
+     *
+     * <p>The null check is load-bearing: {@code archived} is a nullable {@link Boolean}, so rows written
+     * before the column existed hold {@code null} rather than {@code false}, and {@code archived = false}
+     * alone would silently stop counting every one of them.</p>
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            select count(u) from User u
+            where u.company.id = :companyId and (u.archived is null or u.archived = false)
+            """)
+    long countSeatsInUse(@org.springframework.data.repository.query.Param("companyId") Long companyId);
 
     List<User> findByCompanyIdOrderByIdDesc(Long companyId);
 

@@ -188,6 +188,7 @@ public class PlanService {
         if (!plan.isSelectable() || !sub.getPlan().isSelectable()) {
             throw new BadRequestException("error.plan.invalidPlan");
         }
+        requireSeatsFitPlan(plan);
         Instant now = Instant.now();
         sub.setPlan(plan);
         sub.setStatus(SubscriptionStatus.ACTIVE);
@@ -275,7 +276,7 @@ public class PlanService {
 
     public void assertCanCreateUser() {
         checkLimit(getOrCreateSubscription().getPlan().getMaxUsers(),
-                userRepository.countByCompanyId(SecurityUtil.currentCompanyId()),
+                userRepository.countSeatsInUse(SecurityUtil.currentCompanyId()),
                 "error.plan.userLimit");
     }
 
@@ -303,6 +304,28 @@ public class PlanService {
         }
     }
 
+    /**
+     * Refuses a downgrade that would leave the company already over the target plan's seat limit.
+     *
+     * <p>Without this the cap was enforced at exactly one moment - creating a user - so moving to a smaller
+     * plan simply landed you over it, silently and with no warning: a 25-seat team could sit on the 5-seat
+     * tier indefinitely (finding N-009). Refusing is the honest answer, and it is actionable rather than
+     * annoying because archiving a user now frees a seat (N-008), so the way out does not mean deleting
+     * anyone's records.</p>
+     *
+     * <p>Only ever tightens: moving to a larger plan, or one with no limit, passes untouched.</p>
+     */
+    private void requireSeatsFitPlan(PlanType target) {
+        int limit = target.getMaxUsers();
+        if (limit == PlanType.UNLIMITED) {
+            return;
+        }
+        long inUse = userRepository.countSeatsInUse(SecurityUtil.currentCompanyId());
+        if (inUse > limit) {
+            throw new ForbiddenException("error.plan.downgradeSeats", limit, inUse);
+        }
+    }
+
     private void checkLimit(int limit, long current, String messageKey) {
         if (limit != PlanType.UNLIMITED && current >= limit) {
             throw new ForbiddenException(messageKey, limit);
@@ -326,9 +349,9 @@ public class PlanService {
 
         List<SubscriptionViewDto.UsageItem> usage = freePlan
                 ? List.of(new SubscriptionViewDto.UsageItem("USERS",
-                        userRepository.countByCompanyId(companyId), plan.getMaxUsers()))
+                        userRepository.countSeatsInUse(companyId), plan.getMaxUsers()))
                 : List.of(
-                        new SubscriptionViewDto.UsageItem("USERS", userRepository.countByCompanyId(companyId), plan.getMaxUsers()),
+                        new SubscriptionViewDto.UsageItem("USERS", userRepository.countSeatsInUse(companyId), plan.getMaxUsers()),
                         new SubscriptionViewDto.UsageItem("MANUFACTURERS", manufacturerRepository.count(), plan.getMaxManufacturers()),
                         new SubscriptionViewDto.UsageItem("PRODUCTS", productRepository.count(), plan.getMaxProducts())
                 );
