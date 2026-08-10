@@ -68,6 +68,7 @@ public class OrderAnalyticsService {
                 ));
             }
             lines.add(new Line(
+                    item.getId(),
                     product != null ? product.getId() : null,
                     product != null ? product.getName() : null,
                     product != null ? product.getSku() : null,
@@ -75,7 +76,8 @@ public class OrderAnalyticsService {
                     nz(item.getUnitPrice()),
                     nz(item.getLineTotal()),
                     avgCost,
-                    lots
+                    lots,
+                    nz(item.getPickedQuantity())
             ));
         }
 
@@ -92,6 +94,8 @@ public class OrderAnalyticsService {
                 order.getWarehouse() != null ? order.getWarehouse().getName() : null,
                 null, false, // sales orders have no attached supplier invoice file
                 order.getNotes(),
+                order.getCurrency(),
+                order.getExchangeRate(),
                 lines, totals,
                 audit(order.getCreatedById(), order.getCreatedAt(), order.getUpdatedById(), order.getUpdatedAt()),
                 statusHistory(OrderType.SALES, order.getId())
@@ -107,6 +111,7 @@ public class OrderAnalyticsService {
         for (PurchaseOrderItem item : order.getItems()) {
             Product product = item.getProduct();
             lines.add(new Line(
+                    item.getId(),
                     product != null ? product.getId() : null,
                     product != null ? product.getName() : null,
                     product != null ? product.getSku() : null,
@@ -114,7 +119,8 @@ public class OrderAnalyticsService {
                     nz(item.getUnitPrice()),
                     nz(item.getLineTotal()),
                     null, // a purchase line IS the cost, so no separate estimate
-                    null  // lot allocations apply to sales lines only
+                    null, // lot allocations apply to sales lines only
+                    nz(item.getReceivedQuantity())
             ));
         }
 
@@ -132,6 +138,8 @@ public class OrderAnalyticsService {
                 order.getInvoiceFileName(),
                 order.getInvoiceFileUrl() != null && !order.getInvoiceFileUrl().isBlank(),
                 order.getNotes(),
+                order.getCurrency(),
+                order.getExchangeRate(),
                 lines, totals,
                 audit(order.getCreatedById(), order.getCreatedAt(), order.getUpdatedById(), order.getUpdatedAt()),
                 statusHistory(OrderType.PURCHASE, order.getId())

@@ -56,7 +56,9 @@ public class ProductAnalyticsService {
         for (SalesOrderItem item : salesItems) {
             SalesOrder order = item.getSalesOrder();
             int qty = nz(item.getQuantity());
-            BigDecimal line = nz(item.getLineTotal());
+            // A product's history spans orders in different currencies, so every amount here - the
+            // running totals and the rows - is converted to base with its own order's rate.
+            BigDecimal line = MoneyConverter.toBase(item.getLineTotal(), rateOf(order));
             // Cancelled orders are still listed in the table below, but never counted as revenue.
             if (!isCancelled(order)) {
                 totalUnitsSold += qty;
@@ -70,7 +72,7 @@ public class ProductAnalyticsService {
                     order != null && order.getStatus() != null ? order.getStatus().name() : null,
                     order != null && order.getClient() != null ? order.getClient().getName() : null,
                     qty,
-                    nz(item.getUnitPrice()),
+                    MoneyConverter.toBase(item.getUnitPrice(), rateOf(order)),
                     line
             ));
         }
@@ -82,7 +84,7 @@ public class ProductAnalyticsService {
         for (PurchaseOrderItem item : purchaseItems) {
             PurchaseOrder order = item.getPurchaseOrder();
             int qty = nz(item.getQuantity());
-            BigDecimal line = nz(item.getLineTotal());
+            BigDecimal line = MoneyConverter.toBase(item.getLineTotal(), rateOf(order));
             // Cancelled orders are still listed in the table below, but never counted as cost.
             if (!isCancelled(order)) {
                 totalUnitsPurchased += qty;
@@ -96,7 +98,7 @@ public class ProductAnalyticsService {
                     order != null && order.getStatus() != null ? order.getStatus().name() : null,
                     order != null && order.getManufacturer() != null ? order.getManufacturer().getName() : null,
                     qty,
-                    nz(item.getUnitPrice()),
+                    MoneyConverter.toBase(item.getUnitPrice(), rateOf(order)),
                     line
             ));
         }
@@ -131,7 +133,7 @@ public class ProductAnalyticsService {
             YearMonth ym = monthOf(item.getSalesOrder() != null ? item.getSalesOrder().getOrderDate() : null);
             if (ym == null) continue;
             units.computeIfAbsent(ym, k -> new long[2])[0] += nz(item.getQuantity());
-            revenue.merge(ym, nz(item.getLineTotal()), BigDecimal::add);
+            revenue.merge(ym, MoneyConverter.toBase(item.getLineTotal(), rateOf(item.getSalesOrder())), BigDecimal::add);
         }
         for (PurchaseOrderItem item : purchaseItems) {
             if (isCancelled(item.getPurchaseOrder())) continue;
@@ -182,6 +184,14 @@ public class ProductAnalyticsService {
 
     private static boolean isCancelled(PurchaseOrder order) {
         return order != null && order.getStatus() == OrderStatus.CANCELLED;
+    }
+
+    private static BigDecimal rateOf(SalesOrder order) {
+        return order != null ? order.getExchangeRate() : null;
+    }
+
+    private static BigDecimal rateOf(PurchaseOrder order) {
+        return order != null ? order.getExchangeRate() : null;
     }
 
     private static int nz(Integer value) {

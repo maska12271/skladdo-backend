@@ -28,14 +28,28 @@ public class JwtService {
         this.expirationMs = expirationMs;
     }
 
+    /** Mints a token for a normal session, working inside the account's own company. */
     public String generateToken(CustomUserDetails user) {
+        return generateToken(user, user.getHomeCompanyId());
+    }
+
+    /**
+     * Mints a token pinned to {@code activeCompanyId} - the tenant the session works in. For everyone but
+     * a switched warehouse operator this is the account's own company.
+     *
+     * <p>The claim is only ever a <em>request</em> to act in that company: {@link JwtAuthenticationFilter}
+     * re-checks it against a live connection on every request, so a tampered or stale token grants
+     * nothing.</p>
+     */
+    public String generateToken(CustomUserDetails user, Long activeCompanyId) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + expirationMs);
         return Jwts.builder()
                 .subject(user.getEmail())
                 .claims(Map.of(
                         "userId", user.getId(),
-                        "companyId", user.getCompanyId(),
+                        "companyId", user.getHomeCompanyId(),
+                        "activeCompanyId", activeCompanyId == null ? user.getHomeCompanyId() : activeCompanyId,
                         "role", user.getRole().name(),
                         "fullName", user.getFullName() == null ? "" : user.getFullName()
                 ))
@@ -43,6 +57,12 @@ public class JwtService {
                 .expiration(expiry)
                 .signWith(key)
                 .compact();
+    }
+
+    /** The company the token asks to act in, or null when it predates the claim. */
+    public Long extractActiveCompanyId(Claims claims) {
+        Object value = claims.get("activeCompanyId");
+        return value instanceof Number number ? number.longValue() : null;
     }
 
     public Claims parseClaims(String token) {

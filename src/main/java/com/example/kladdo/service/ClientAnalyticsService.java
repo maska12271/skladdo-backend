@@ -52,7 +52,9 @@ public class ClientAnalyticsService {
                             product != null ? product.getName() : null,
                             product != null ? product.getSku() : null,
                             nz(item.getQuantity()),
-                            nz(item.getLineTotal())
+                            // Lines come from many orders, so each is shown in the company's base
+                            // currency using its own order's rate - see MoneyConverter.
+                            MoneyConverter.toBase(item.getLineTotal(), order != null ? order.getExchangeRate() : null)
                     );
                 })
                 .sorted(byDateDesc())

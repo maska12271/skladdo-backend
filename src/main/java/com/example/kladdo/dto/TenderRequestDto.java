@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.math.BigDecimal;
+
 @Getter
 @Setter
 public class TenderRequestDto {
@@ -13,7 +15,6 @@ public class TenderRequestDto {
     private String title;
 
     private String tenderNumber;
-    private String customerName;
 
     @NotNull
     private Long clientId;
@@ -23,4 +24,10 @@ public class TenderRequestDto {
     private String deadline;
     private String description;
     private Double estimatedValue;
+
+    // ISO 4217 currency for the estimated value / bids; null/blank = the company base currency.
+    private String currency;
+
+    // Snapshotted rate: 1 base currency = exchangeRate units of `currency`. Null when in base currency.
+    private BigDecimal exchangeRate;
 }

@@ -21,4 +21,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long>, JpaSpec
 
     /** Whether a non-voided invoice already applies the given prepayment (blocks voiding that prepayment). */
     boolean existsByAppliedPrepaymentInvoiceIdAndStatusNot(Long appliedPrepaymentInvoiceId, InvoicePaymentStatus status);
+
+    /** Unpaid invoices whose due date has passed - drives the overdue notification job. */
+    List<Invoice> findByStatusAndDueDateBefore(InvoicePaymentStatus status, java.time.LocalDate date);
 }

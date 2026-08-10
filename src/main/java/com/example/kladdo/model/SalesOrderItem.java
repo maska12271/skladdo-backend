@@ -3,6 +3,7 @@ package com.example.kladdo.model;
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Min;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.TenantId;
@@ -34,6 +35,17 @@ public class SalesOrderItem {
     private SalesOrder salesOrder;
 
     private Integer quantity;
+
+    /**
+     * How many units of this line have been picked off the shelf, for warehouse staff preparing the
+     * shipment. Purely progress tracking: it never moves stock (stock still moves when the order reaches
+     * a stock-affecting status), so picking can be recorded and corrected freely before dispatch.
+     *
+     * <p>Nullable - a line that predates this feature, or has not been started, reads back {@code null},
+     * treated as 0 everywhere. Same migration-friendly pattern as {@code Product.reorderQuantity}.</p>
+     */
+    @Min(0)
+    private Integer pickedQuantity;
 
     private BigDecimal unitPrice;
 

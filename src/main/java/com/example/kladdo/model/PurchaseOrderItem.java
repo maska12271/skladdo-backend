@@ -2,6 +2,7 @@ package com.example.kladdo.model;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Min;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.TenantId;
@@ -32,6 +33,20 @@ public class PurchaseOrderItem {
     private PurchaseOrder purchaseOrder;
 
     private Integer quantity;
+
+    /**
+     * How many units of this line have physically arrived, recorded at goods-receipt. Purely progress
+     * tracking: it never moves stock (stock still moves when the order reaches a stock-affecting status),
+     * so a receipt can be recorded and corrected while a delivery is being checked in.
+     *
+     * <p>Deliberately <em>not</em> capped at {@link #quantity}: suppliers over-deliver, and hiding that
+     * would defeat the point of checking a delivery in. The UI flags any mismatch.</p>
+     *
+     * <p>Nullable - a line that predates this feature, or has not been received, reads back {@code null},
+     * treated as 0 everywhere.</p>
+     */
+    @Min(0)
+    private Integer receivedQuantity;
 
     private BigDecimal unitPrice;
 

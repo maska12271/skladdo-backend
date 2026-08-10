@@ -42,5 +42,14 @@ public enum PermissionModule {
      * warehouse on orders). {@code canCreate}/{@code canEdit}/{@code canDelete} govern CRUD.
      * {@link Role#WAREHOUSE} staff receive {@code canView} by default.
      */
-    WAREHOUSES
+    WAREHOUSES,
+    /**
+     * Emailing manufacturers: composing and sending outreach (single or bulk) from templates, viewing
+     * sent-email history with open/reply tracking, and managing the reusable template library.
+     * {@code canView} sees the caller's own sent emails (owners/administrators see everyone's, same as
+     * every module); {@code canCreate} composes and sends; {@code canEdit} manages the template library;
+     * {@code canDelete} deletes templates only - a sent email is an immutable audit record and is never
+     * deletable by anyone.
+     */
+    MANUFACTURER_EMAILS
 }

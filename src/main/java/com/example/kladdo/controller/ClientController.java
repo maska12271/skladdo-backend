@@ -48,6 +48,13 @@ public class ClientController {
         return clientService.findById(id);
     }
 
+    /** Countries used by this tenant's clients, most-used first (orders the country picker). */
+    @GetMapping("/countries")
+    @PreAuthorize("@perm.canReadReference(authentication, 'CLIENTS')")
+    public List<String> getCountries() {
+        return clientService.getCountriesByUsage();
+    }
+
     @GetMapping("/{id}/details")
     @PreAuthorize("@perm.canReadReference(authentication, 'CLIENTS')")
     public ClientDetailsDto getDetails(@PathVariable Long id) {

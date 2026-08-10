@@ -30,6 +30,7 @@ public class DashboardService {
     private static final int TOP_LIMIT = 5;
     private static final int ACTIVITY_LIMIT = 10;
     private static final int LATEST_TENDERS = 5;
+    private static final int LOW_STOCK_LIMIT = 10;
 
     // Order/tender statuses considered "active" — mirrors the frontend's isActiveStatus().
     private static final Set<String> ACTIVE_STATUSES = Set.of("NEW", "OPEN", "IN_PROGRESS", "PUBLISHED", "CONFIRMED");
@@ -89,15 +90,17 @@ public class DashboardService {
         // ---- monthly series (zero-filled for the whole window) ----------------------------------
         Map<YearMonth, BigDecimal> revenueByMonth = new HashMap<>();
         Map<YearMonth, BigDecimal> spendByMonth = new HashMap<>();
+        // Every figure on this dashboard spans many orders, so each amount is converted to the company's
+        // base currency first - see MoneyConverter for why raw sums are wrong here.
         for (SalesOrder o : salesOrders) {
             if (isCancelled(o.getStatus())) continue;
             YearMonth ym = monthOf(o.getOrderDate());
-            if (ym != null) revenueByMonth.merge(ym, nz(o.getTotalAmount()), BigDecimal::add);
+            if (ym != null) revenueByMonth.merge(ym, baseOf(o), BigDecimal::add);
         }
         for (PurchaseOrder o : purchaseOrders) {
             if (isCancelled(o.getStatus())) continue;
             YearMonth ym = monthOf(o.getOrderDate());
-            if (ym != null) spendByMonth.merge(ym, nz(o.getTotalAmount()), BigDecimal::add);
+            if (ym != null) spendByMonth.merge(ym, baseOf(o), BigDecimal::add);
         }
         List<MonthlyPoint> monthly = new ArrayList<>();
         for (int i = MONTHS - 1; i >= 0; i--) {
@@ -110,9 +113,9 @@ public class DashboardService {
         }
 
         // ---- sales / purchase money blocks ------------------------------------------------------
-        Money sales = canSales ? money(salesOrders, SalesOrder::getOrderDate, SalesOrder::getTotalAmount,
+        Money sales = canSales ? money(salesOrders, SalesOrder::getOrderDate, DashboardService::baseOf,
                 o -> o.getStatus() != null ? o.getStatus().name() : null, thisMonth, lastMonth) : null;
-        Money purchases = canPurchases ? money(purchaseOrders, PurchaseOrder::getOrderDate, PurchaseOrder::getTotalAmount,
+        Money purchases = canPurchases ? money(purchaseOrders, PurchaseOrder::getOrderDate, DashboardService::baseOf,
                 o -> o.getStatus() != null ? o.getStatus().name() : null, thisMonth, lastMonth) : null;
 
         // ---- products block ---------------------------------------------------------------------
@@ -129,7 +132,10 @@ public class DashboardService {
                             nz(p.getMinimumStock())
                     ))
                     .toList();
-            productsBlock = new ProductsBlock(products.size(), lowStock.size(), lowStock);
+            // The widget shows the worst few and links to the filtered product list for the rest, so
+            // there is no reason to ship every low-stock row - the count above stays the true total.
+            productsBlock = new ProductsBlock(products.size(), lowStock.size(),
+                    lowStock.stream().limit(LOW_STOCK_LIMIT).toList());
         }
 
         // ---- expiry block (lots already expired or expiring within the horizon) ------------------
@@ -157,7 +163,7 @@ public class DashboardService {
         if (canTenders) {
             int activeTenders = (int) tenders.stream().filter(t -> isActive(t.getStatus())).count();
             BigDecimal totalValue = tenders.stream()
-                    .map(t -> t.getEstimatedValue() != null ? BigDecimal.valueOf(t.getEstimatedValue()) : BigDecimal.ZERO)
+                    .map(DashboardService::baseOf)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             List<TenderRow> latest = tenders.stream()
                     .sorted(Comparator.comparing(Tender::getId, Comparator.nullsLast(Comparator.reverseOrder())))
@@ -167,7 +173,7 @@ public class DashboardService {
                             t.getTitle(),
                             t.getStatus(),
                             tenderCustomer(t),
-                            t.getEstimatedValue() != null ? BigDecimal.valueOf(t.getEstimatedValue()) : null
+                            t.getEstimatedValue() != null ? baseOf(t) : null
                     ))
                     .toList();
             tendersBlock = new TendersBlock(activeTenders, tenders.size(), totalValue, latest);
@@ -181,7 +187,7 @@ public class DashboardService {
                 if (isCancelled(o.getStatus())) continue;
                 if (!inMonth(o.getOrderDate(), thisMonth) || o.getClient() == null) continue;
                 byClient.computeIfAbsent(o.getClient().getId(), k -> new RankAccumulator(o.getClient().getName()))
-                        .add(nz(o.getTotalAmount()), 1);
+                        .add(baseOf(o), 1);
             }
             topClients = rank(byClient);
         }
@@ -196,7 +202,7 @@ public class DashboardService {
                 Product p = item.getProduct();
                 if (p == null) continue;
                 byProduct.computeIfAbsent(p.getId(), k -> new RankAccumulator(p.getName()))
-                        .add(nz(item.getLineTotal()), nz(item.getQuantity()));
+                        .add(baseOf(item.getLineTotal(), so), nz(item.getQuantity()));
             }
             topProducts = rank(byProduct);
         }
@@ -208,7 +214,7 @@ public class DashboardService {
                 activity.add(new ActivityItem("SALE", o.getId(),
                         o.getClient() != null ? o.getClient().getName() : o.getOrderNumber(),
                         o.getStatus() != null ? o.getStatus().name() : null,
-                        o.getOrderDate(), nz(o.getTotalAmount())));
+                        o.getOrderDate(), baseOf(o)));
             }
         }
         if (canPurchases) {
@@ -216,14 +222,14 @@ public class DashboardService {
                 activity.add(new ActivityItem("PURCHASE", o.getId(),
                         o.getManufacturer() != null ? o.getManufacturer().getName() : o.getOrderNumber(),
                         o.getStatus() != null ? o.getStatus().name() : null,
-                        o.getOrderDate(), nz(o.getTotalAmount())));
+                        o.getOrderDate(), baseOf(o)));
             }
         }
         if (canTenders) {
             for (Tender t : tenders) {
                 activity.add(new ActivityItem("TENDER", t.getId(), t.getTitle(), t.getStatus(),
                         t.getPublishedAt(),
-                        t.getEstimatedValue() != null ? BigDecimal.valueOf(t.getEstimatedValue()) : BigDecimal.ZERO));
+                        baseOf(t)));
             }
         }
         activity = activity.stream()
@@ -290,7 +296,7 @@ public class DashboardService {
         for (Invoice inv : invoices) {
             if (inv.getStatus() != InvoicePaymentStatus.PAID || inv.getPaidDate() == null) continue;
             paidCount++;
-            BigDecimal principal = nz(inv.getTotalAmount()).subtract(nz(inv.getAppliedPrepaymentAmount()));
+            BigDecimal principal = basePrincipal(inv);
             YearMonth ym = YearMonth.from(inv.getPaidDate());
             if (ym.equals(thisMonth)) {
                 thisTotal = thisTotal.add(principal);
@@ -318,7 +324,7 @@ public class DashboardService {
 
         for (Invoice inv : invoices) {
             if (inv.getStatus() != InvoicePaymentStatus.UNPAID) continue;
-            BigDecimal principal = nz(inv.getTotalAmount()).subtract(nz(inv.getAppliedPrepaymentAmount()));
+            BigDecimal principal = basePrincipal(inv);
             unpaidCount++;
             unpaidTotal = unpaidTotal.add(principal);
 
@@ -346,7 +352,27 @@ public class DashboardService {
                 .sorted(Comparator.comparing(OverdueRow::amountDue).reversed())
                 .limit(TOP_LIMIT)
                 .toList();
-        return new Receivables(unpaidCount, unpaidTotal, overdueCount, overdueTotal, penaltyTotal, topOverdue);
+        return new Receivables(unpaidCount, unpaidTotal, overdueCount, overdueTotal, penaltyTotal, topOverdue,
+                aging(overdue));
+    }
+
+    /**
+     * Splits every overdue row into the three aging bands, so the dashboard can chart how much of the
+     * debt is merely late versus long gone. Buckets are always all three, zeros included, to keep the
+     * chart's segments stable between refreshes.
+     */
+    private static List<AgingBucket> aging(List<OverdueRow> overdue) {
+        int[] counts = new int[3];
+        BigDecimal[] totals = {BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO};
+        for (OverdueRow row : overdue) {
+            int i = row.daysOverdue() <= 30 ? 0 : row.daysOverdue() <= 60 ? 1 : 2;
+            counts[i]++;
+            totals[i] = totals[i].add(row.amountDue());
+        }
+        return List.of(
+                new AgingBucket("D1_30", counts[0], totals[0]),
+                new AgingBucket("D31_60", counts[1], totals[1]),
+                new AgingBucket("D60_PLUS", counts[2], totals[2]));
     }
 
     private static boolean isOpenForFulfilment(OrderStatus status) {
@@ -387,7 +413,7 @@ public class DashboardService {
     }
 
     private static String tenderCustomer(Tender t) {
-        if (t.getCustomerName() != null && !t.getCustomerName().isBlank()) return t.getCustomerName();
+        // The tender's requester is its linked client.
         return t.getClient() != null ? t.getClient().getName() : null;
     }
 
@@ -417,6 +443,39 @@ public class DashboardService {
 
     private static BigDecimal nz(BigDecimal value) {
         return value != null ? value : BigDecimal.ZERO;
+    }
+
+    // --- Base-currency conversion ----------------------------------------------------------------
+    // Every figure on this dashboard aggregates across many records, which may each be in a different
+    // currency, so amounts are converted with the rate snapshotted on their own transaction before being
+    // summed. See MoneyConverter.
+
+    private static BigDecimal baseOf(SalesOrder order) {
+        return MoneyConverter.toBase(order.getTotalAmount(), order.getExchangeRate());
+    }
+
+    private static BigDecimal baseOf(PurchaseOrder order) {
+        return MoneyConverter.toBase(order.getTotalAmount(), order.getExchangeRate());
+    }
+
+    private static BigDecimal baseOf(Tender tender) {
+        return MoneyConverter.toBase(tender.getEstimatedValue(), tender.getExchangeRate());
+    }
+
+    /** A line amount converted with its parent order's rate. */
+    private static BigDecimal baseOf(BigDecimal lineAmount, SalesOrder order) {
+        return MoneyConverter.toBase(lineAmount, order != null ? order.getExchangeRate() : null);
+    }
+
+    /**
+     * An invoice's outstanding principal (total less any prepayment already applied) in base currency.
+     * Invoices carry a currency but no rate of their own, so the rate comes from the sales order they
+     * were issued for.
+     */
+    private static BigDecimal basePrincipal(Invoice invoice) {
+        BigDecimal principal = nz(invoice.getTotalAmount()).subtract(nz(invoice.getAppliedPrepaymentAmount()));
+        SalesOrder order = invoice.getSalesOrder();
+        return MoneyConverter.toBase(principal, order != null ? order.getExchangeRate() : null);
     }
 
     /** Mutable accumulator for the top-N rankings. */

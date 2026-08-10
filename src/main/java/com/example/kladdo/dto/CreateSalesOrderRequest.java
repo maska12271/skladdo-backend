@@ -26,6 +26,15 @@ public class CreateSalesOrderRequest {
     private LocalDate orderDate;
     private LocalDate closingDate;
 
+    // ISO 4217 currency for this order's amounts; null/blank = the company base currency.
+    private String currency;
+
+    // Snapshotted rate: 1 base currency = exchangeRate units of `currency`. Null when in base currency.
+    private BigDecimal exchangeRate;
+
+    // Optional tender this order belongs to (null = not linked to a tender).
+    private Long tenderId;
+
     @NotNull
     @DecimalMin("0.0")
     private BigDecimal deliveryPrice;
@@ -125,6 +134,30 @@ public class CreateSalesOrderRequest {
 
     public void setClosingDate(LocalDate closingDate) {
         this.closingDate = closingDate;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public BigDecimal getExchangeRate() {
+        return exchangeRate;
+    }
+
+    public void setExchangeRate(BigDecimal exchangeRate) {
+        this.exchangeRate = exchangeRate;
+    }
+
+    public Long getTenderId() {
+        return tenderId;
+    }
+
+    public void setTenderId(Long tenderId) {
+        this.tenderId = tenderId;
     }
 
     public BigDecimal getDeliveryPrice() {

@@ -10,5 +10,12 @@ public interface OrderStatusChangeRepository extends JpaRepository<OrderStatusCh
 
     List<OrderStatusChange> findByOrderTypeAndOrderIdOrderByChangedAtAscIdAsc(OrderType orderType, Long orderId);
 
+    /**
+     * Status history for several orders at once, oldest first. Used by the stock ledger, which replays
+     * every order's transitions and would otherwise issue one query per order.
+     */
+    List<OrderStatusChange> findByOrderTypeAndOrderIdInOrderByChangedAtAscIdAsc(OrderType orderType,
+                                                                                java.util.Collection<Long> orderIds);
+
     void deleteByOrderTypeAndOrderId(OrderType orderType, Long orderId);
 }

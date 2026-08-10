@@ -80,7 +80,8 @@ public class UserAnalyticsService {
                 order.getStatus() != null ? order.getStatus().name() : null,
                 order.getClient() != null ? order.getClient().getName() : null,
                 order.getItems() != null ? order.getItems().size() : 0,
-                nz(order.getTotalAmount())
+                // Shown in base currency: one user's orders can span several currencies.
+                MoneyConverter.toBase(order.getTotalAmount(), order.getExchangeRate())
         );
     }
 
@@ -92,7 +93,7 @@ public class UserAnalyticsService {
                 order.getStatus() != null ? order.getStatus().name() : null,
                 order.getManufacturer() != null ? order.getManufacturer().getName() : null,
                 order.getItems() != null ? order.getItems().size() : 0,
-                nz(order.getTotalAmount())
+                MoneyConverter.toBase(order.getTotalAmount(), order.getExchangeRate())
         );
     }
 

@@ -12,6 +12,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneId;
 
 /**
  * Company-wide preferences and business defaults, edited by owners/administrators on the settings page.
@@ -26,6 +27,12 @@ import java.time.Instant;
 @Setter
 @EntityListeners(AuditingEntityListener.class)
 public class CompanySettings {
+
+    /** Timezone used when a company has not chosen one (or chose one this JVM does not recognise). */
+    private static final String DEFAULT_TIMEZONE = "UTC";
+
+    /** Interface languages the app ships; keep in sync with the frontend's i18n locales. */
+    public static final java.util.List<String> SUPPORTED_LANGUAGES = java.util.List.of("en", "et", "ru");
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -44,6 +51,26 @@ public class CompanySettings {
     /** Whether prices are shown tax-inclusive across the app. Display preference only; stored prices stay net. */
     @Column(nullable = false)
     private boolean pricesIncludeTax = false;
+
+    /**
+     * IANA timezone the company operates in (e.g. {@code "Europe/Tallinn"}), used to interpret dates and to
+     * time scheduled work at a sensible local hour. Nullable with an effective-value getter so the column
+     * adds cleanly to an existing settings row under {@code ddl-auto=update} - the same migration-friendly
+     * pattern as the invoice-appearance fields below.
+     */
+    private String timezone;
+
+    /**
+     * Effective IANA timezone, falling back to UTC when unset or when the stored value is not a zone this
+     * JVM knows. Validating on read (rather than trusting the column) keeps a bad value - from an old row
+     * or a direct API call - from breaking scheduled work later.
+     */
+    public String getTimezone() {
+        if (timezone == null || timezone.isBlank()) {
+            return DEFAULT_TIMEZONE;
+        }
+        return ZoneId.getAvailableZoneIds().contains(timezone) ? timezone : DEFAULT_TIMEZONE;
+    }
 
     // --- Invoicing -------------------------------------------------------------------------------
 
@@ -72,6 +99,26 @@ public class CompanySettings {
      * {@code 0}) for the same migration reason as {@link #lastSalesOrderNumber}.
      */
     private Integer lastPurchaseOrderNumber;
+
+    /**
+     * Prefix for suggested tender numbers. Unlike the fixed {@code "SO-"}/{@code "PO-"} order prefixes this
+     * is configurable, like {@link #invoiceNumberPrefix} - tender references usually have to match a
+     * customer's or authority's own scheme. Nullable with an effective getter so the column adds cleanly
+     * under {@code ddl-auto=update}.
+     */
+    private String tenderNumberPrefix;
+
+    /**
+     * Highest tender sequence number issued so far; the next tender suggested in the create form gets
+     * {@code lastTenderNumber + 1}. Nullable (treated as {@code 0}) for the same migration reason as
+     * {@link #lastSalesOrderNumber}.
+     */
+    private Integer lastTenderNumber;
+
+    /** Effective tender-number prefix: a row that predates this column reads back null. */
+    public String getTenderNumberPrefix() {
+        return tenderNumberPrefix != null && !tenderNumberPrefix.isBlank() ? tenderNumberPrefix : "TND-";
+    }
 
     /** Default number of days a customer has to pay an invoice before it is overdue. */
     @Min(0)
@@ -187,6 +234,40 @@ public class CompanySettings {
         return invoiceShowNotes == null || invoiceShowNotes;
     }
 
+    // --- Email / SMTP ----------------------------------------------------------------------------
+    // Per-company outbound mail settings, used to build a JavaMailSenderImpl per send. All nullable so
+    // the columns migrate cleanly onto an existing settings row under ddl-auto=update. The password is
+    // stored encrypted (never plaintext); see EncryptionService and CompanySettingsService.
+
+    /** SMTP server hostname (e.g. "smtp.gmail.com"). */
+    private String smtpHost;
+
+    /** SMTP server port (e.g. 587 for STARTTLS). */
+    private Integer smtpPort;
+
+    /** SMTP authentication username. */
+    private String smtpUsername;
+
+    /**
+     * AES-GCM-encrypted SMTP password (Base64 of IV+ciphertext+tag), never the raw password. The
+     * {@code Encrypted} suffix is deliberate: nothing should read or serialize this as plaintext.
+     */
+    private String smtpPasswordEncrypted;
+
+    /** Address outgoing mail is sent From (the tenant's own sending address). */
+    private String smtpFromAddress;
+
+    /** Display name shown alongside the From address. */
+    private String smtpFromName;
+
+    /** Whether to use STARTTLS. Nullable for migration; defaults to true via {@link #getSmtpUseTls()}. */
+    private Boolean smtpUseTls;
+
+    /** Effective STARTTLS flag: a row migrated from before this column existed reads back null → true. */
+    public boolean getSmtpUseTls() {
+        return smtpUseTls == null || smtpUseTls;
+    }
+
     // --- New-product defaults --------------------------------------------------------------------
 
     /** Unit applied to a new product when none is supplied (e.g. "pcs"). */
@@ -197,6 +278,28 @@ public class CompanySettings {
     @Min(0)
     @Column(nullable = false)
     private Integer defaultMinimumStock = 0;
+
+    // --- New-user defaults -----------------------------------------------------------------------
+
+    /**
+     * Interface language a newly invited user starts in (and the language their invitation email is
+     * written in). Nullable with an effective getter so the column adds cleanly under
+     * {@code ddl-auto=update}; each user can change their own afterwards.
+     */
+    @Column(length = 5)
+    private String defaultUserLanguage;
+
+    /**
+     * Effective new-user language, falling back to English when unset or not one the app ships.
+     *
+     * <p>The null check is load-bearing: {@code List.of(...)} rejects a null argument to
+     * {@code contains} with a {@link NullPointerException} rather than returning false, and this column
+     * reads back null on every row that predates it.</p>
+     */
+    public String getDefaultUserLanguage() {
+        return defaultUserLanguage != null && SUPPORTED_LANGUAGES.contains(defaultUserLanguage)
+                ? defaultUserLanguage : "en";
+    }
 
     // --- Order defaults --------------------------------------------------------------------------
 

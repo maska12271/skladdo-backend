@@ -13,4 +13,6 @@ public class TenderParticipantResponseDto {
     private Double offeredPrice;
     private String notes;
     private Boolean winner;
+    private Boolean ownCompany;
+    private Boolean participating;
 }

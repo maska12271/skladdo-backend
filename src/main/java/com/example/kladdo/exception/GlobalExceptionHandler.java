@@ -65,6 +65,65 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * The request body could not be read at all: malformed JSON, a value of the wrong type, or a string
+     * that is not one of an enum's constants. All of these are the caller's mistake, so they are 400.
+     *
+     * <p>Needed explicitly because {@link org.springframework.http.converter.HttpMessageNotReadableException}
+     * does not implement {@link ErrorResponse}, so without a handler here it fell through to
+     * {@link #handleUnexpected} and was reported as a 500 "something went wrong on our end" — telling a
+     * client with a typo in its payload to contact support.</p>
+     */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> handleUnreadableBody(
+            org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        // The underlying parser message can name internal classes, so it is logged rather than returned.
+        log.debug("Unreadable request body: {}", ex.getMessage());
+        return error(resolve("error.badRequest.malformed"));
+    }
+
+    /**
+     * A path variable or query parameter that cannot be converted to the expected type, e.g.
+     * {@code /api/products/not-a-number}. Also a client error, and also not an {@link ErrorResponse}.
+     */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> handleTypeMismatch(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException ex) {
+        log.debug("Type mismatch for parameter '{}': {}", ex.getName(), ex.getMessage());
+        return error(resolve("error.badRequest.malformed"));
+    }
+
+    /**
+     * A required {@code @RequestParam} (e.g. {@code ?productId=} on the stock ledger) was left off the
+     * request entirely. Also not an {@link ErrorResponse}, so without a handler here it fell through to
+     * Spring Boot's own default error page instead of this app's translated JSON — which, in dev, includes
+     * a full stack trace ({@code server.error.include-stacktrace} defaults to {@code ALWAYS} whenever
+     * {@code spring-boot-devtools} is on the classpath).
+     */
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> handleMissingParameter(
+            org.springframework.web.bind.MissingServletRequestParameterException ex) {
+        log.debug("Missing request parameter '{}'", ex.getParameterName());
+        return error(resolve("error.badRequest.missingParam", ex.getParameterName()));
+    }
+
+    /**
+     * A {@code sortBy} naming a field the entity does not have. The list endpoints build their {@code Sort}
+     * straight from that query parameter, so a stale bookmark or a hand-edited URL reaches Spring Data with
+     * an unknown property — the caller's mistake, not a fault, so 400 rather than the 500 it produced
+     * before this handler existed.
+     */
+    @ExceptionHandler(org.springframework.data.core.PropertyReferenceException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> handleUnknownSortProperty(
+            org.springframework.data.core.PropertyReferenceException ex) {
+        log.debug("Unknown sort property '{}': {}", ex.getPropertyName(), ex.getMessage());
+        return error(resolve("error.badRequest.sortField", ex.getPropertyName()));
+    }
+
+    /**
      * Residual {@link IllegalArgumentException}/{@link IllegalStateException} are internal invariants
      * (e.g. "no authenticated user in the security context"), not user-facing rules — those now throw
      * {@link BadRequestException}. Return a generic translated message so internals never leak.
@@ -82,6 +141,16 @@ public class GlobalExceptionHandler {
         return error(resolve("error.auth.invalidCredentials"));
     }
 
+    /**
+     * Too many attempts at a throttled endpoint. 429 is the honest status and lets a client tell a
+     * lockout apart from a rejected credential, which a 400 would hide.
+     */
+    @ExceptionHandler(TooManyRequestsException.class)
+    @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
+    public Map<String, String> handleTooManyRequests(TooManyRequestsException ex) {
+        return error(resolve(ex.getMessageKey(), ex.getArgs()));
+    }
+
     @ExceptionHandler(ForbiddenException.class)
     @ResponseStatus(HttpStatus.FORBIDDEN)
     public Map<String, String> handleForbidden(ForbiddenException ex) {
@@ -95,24 +164,34 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Turns raw database constraint failures into a friendly 409 instead of a 500 + stack trace. Covers
-     * the two common cases: deleting a record that other records still reference (foreign key), and
-     * saving a value that must be unique but already exists. Distinguished by SQLSTATE (23503 = foreign
-     * key, 23505 = unique) which is standard across H2/PostgreSQL.
+     * Turns raw database constraint failures into a friendly response instead of a 500 + stack trace.
+     * Distinguished by SQLSTATE, which is standard across H2/PostgreSQL:
+     *
+     * <ul>
+     *   <li>{@code 22001} — a value was longer than its column. This is the <em>caller's</em> input being
+     *       too long, not a clash with existing data, so it is a <b>400</b>. It used to fall into the
+     *       generic branch and be reported as "this action conflicts with existing data", which described
+     *       the wrong problem entirely and gave the user nothing to act on.</li>
+     *   <li>{@code 23503} — foreign key: the record is still referenced (409).</li>
+     *   <li>{@code 23505} — unique: that value already exists (409).</li>
+     *   <li>{@code 23502} — not null: a required value was missing. Also the caller's input (400).</li>
+     * </ul>
+     *
+     * <p>These are a safety net, not the primary defence: a field with a proper {@code @Size}/{@code @NotNull}
+     * is rejected by bean validation first, with a message that can name the field. This branch is what
+     * stops the ones that slip through from being described as something they are not.</p>
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public Map<String, String> handleDataIntegrity(DataIntegrityViolationException ex) {
+    public ResponseEntity<Map<String, String>> handleDataIntegrity(DataIntegrityViolationException ex) {
         String sqlState = sqlStateOf(ex);
-        String key;
-        if ("23503".equals(sqlState)) {
-            key = "error.conflict.foreignKey";
-        } else if ("23505".equals(sqlState)) {
-            key = "error.conflict.unique";
-        } else {
-            key = "error.conflict.generic";
-        }
-        return error(resolve(key));
+        log.debug("Data integrity violation, SQLSTATE {}: {}", sqlState, ex.getMessage());
+        return switch (sqlState == null ? "" : sqlState) {
+            case "22001" -> ResponseEntity.badRequest().body(error(resolve("error.validation.tooLong")));
+            case "23502" -> ResponseEntity.badRequest().body(error(resolve("error.validation.required")));
+            case "23503" -> ResponseEntity.status(HttpStatus.CONFLICT).body(error(resolve("error.conflict.foreignKey")));
+            case "23505" -> ResponseEntity.status(HttpStatus.CONFLICT).body(error(resolve("error.conflict.unique")));
+            default -> ResponseEntity.status(HttpStatus.CONFLICT).body(error(resolve("error.conflict.generic")));
+        };
     }
 
     /**

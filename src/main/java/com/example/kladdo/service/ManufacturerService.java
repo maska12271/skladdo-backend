@@ -1,5 +1,6 @@
 package com.example.kladdo.service;
 
+import com.example.kladdo.model.AuditAction;
 import com.example.kladdo.exception.ResourceNotFoundException;
 import com.example.kladdo.model.Manufacturer;
 import com.example.kladdo.model.PartnerCategory;
@@ -21,11 +22,18 @@ public class ManufacturerService {
 
     private final ManufacturerRepository manufacturerRepository;
     private final PartnerCategoryRepository partnerCategoryRepository;
+    private final PlanService planService;
+
+    private final AuditService auditService;
 
     public ManufacturerService(ManufacturerRepository manufacturerRepository,
-                               PartnerCategoryRepository partnerCategoryRepository) {
+                               PartnerCategoryRepository partnerCategoryRepository,
+                               PlanService planService,
+                               AuditService auditService) {
         this.manufacturerRepository = manufacturerRepository;
         this.partnerCategoryRepository = partnerCategoryRepository;
+        this.planService = planService;
+        this.auditService = auditService;
     }
 
     /**
@@ -66,8 +74,16 @@ public class ManufacturerService {
     }
 
     public Manufacturer save(Manufacturer manufacturer) {
+        // A brand-new manufacturer counts against the plan's cap; re-saving an existing one does not.
+        if (manufacturer.getId() == null) {
+            planService.assertCanCreateManufacturer();
+        }
         manufacturer.setCategories(resolveCategories(manufacturer.getCategories()));
-        return manufacturerRepository.save(manufacturer);
+        boolean isNew = manufacturer.getId() == null;
+        Manufacturer saved = manufacturerRepository.save(manufacturer);
+        auditService.record(AuditService.ENTITY_MANUFACTURER, saved.getId(),
+                isNew ? AuditAction.CREATE : AuditAction.UPDATE, saved.getName());
+        return saved;
     }
 
     public Manufacturer update(Long id, Manufacturer updatedManufacturer) {
@@ -81,11 +97,21 @@ public class ManufacturerService {
         manufacturer.setNotes(updatedManufacturer.getNotes());
         manufacturer.setCategories(resolveCategories(updatedManufacturer.getCategories()));
         manufacturer.setActive(updatedManufacturer.getActive());
-        return manufacturerRepository.save(manufacturer);
+        Manufacturer saved = manufacturerRepository.save(manufacturer);
+        auditService.record(AuditService.ENTITY_MANUFACTURER, saved.getId(), AuditAction.UPDATE, saved.getName());
+        return saved;
     }
 
     public void delete(Long id) {
-        manufacturerRepository.delete(findById(id));
+        Manufacturer manufacturer = findById(id);
+        String name = manufacturer.getName();
+        manufacturerRepository.delete(manufacturer);
+        auditService.record(AuditService.ENTITY_MANUFACTURER, id, AuditAction.DELETE, name);
+    }
+
+    /** Countries used by this tenant's manufacturers, most-used first (drives the country picker order). */
+    public List<String> getCountriesByUsage() {
+        return manufacturerRepository.findCountriesByUsage();
     }
 
     /**

@@ -5,6 +5,7 @@ import com.example.kladdo.dto.CreateSalesOrderRequest;
 import com.example.kladdo.dto.InvoiceDetailsDto;
 import com.example.kladdo.dto.OrderDetailsDto;
 import com.example.kladdo.dto.OrderPaymentSummaryDto;
+import com.example.kladdo.dto.UpdateFulfilmentRequest;
 import com.example.kladdo.dto.UpdateSalesOrderRequest;
 import com.example.kladdo.dto.UpdateStatusRequest;
 import com.example.kladdo.model.OrderStatus;
@@ -100,6 +101,21 @@ public class SalesOrderController {
     @PreAuthorize("@perm.canEdit(authentication, 'SALES_ORDERS')")
     public SalesOrder updateStatus(@PathVariable Long id, @Valid @RequestBody UpdateStatusRequest request) {
         return salesOrderService.updateStatus(id, request.status());
+    }
+
+    /**
+     * Records picking progress against the order's lines and returns the refreshed details.
+     *
+     * <p>Open to warehouse staff who can post inventory movements as well as to users who can edit the
+     * order: picking is their job, and it changes no order data beyond the picked counts (in particular
+     * it never moves stock - that still happens on the status change).</p>
+     */
+    @PutMapping("/{id}/fulfilment")
+    @PreAuthorize("@perm.canEdit(authentication, 'SALES_ORDERS') or @perm.canCreate(authentication, 'INVENTORY')")
+    public OrderDetailsDto updateFulfilment(@PathVariable Long id,
+                                            @Valid @RequestBody UpdateFulfilmentRequest request) {
+        salesOrderService.updateFulfilment(id, request);
+        return orderAnalyticsService.getSalesOrderDetails(id);
     }
 
     @DeleteMapping("/{id}")

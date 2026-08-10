@@ -9,14 +9,17 @@ import com.example.kladdo.dto.WarehouseStockItemDto;
 import com.example.kladdo.exception.BadRequestException;
 import com.example.kladdo.exception.ForbiddenException;
 import com.example.kladdo.exception.ResourceNotFoundException;
+import com.example.kladdo.model.ConnectionStatus;
 import com.example.kladdo.model.Product;
 import com.example.kladdo.model.Role;
 import com.example.kladdo.model.User;
 import com.example.kladdo.model.Warehouse;
+import com.example.kladdo.model.WarehouseConnection;
 import com.example.kladdo.model.WarehouseStock;
 import com.example.kladdo.repository.ProductBatchRepository;
 import com.example.kladdo.repository.ProductRepository;
 import com.example.kladdo.repository.UserRepository;
+import com.example.kladdo.repository.WarehouseConnectionRepository;
 import com.example.kladdo.repository.WarehouseRepository;
 import com.example.kladdo.repository.WarehouseStockRepository;
 import com.example.kladdo.security.SecurityUtil;
@@ -39,17 +42,20 @@ public class WarehouseService {
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
     private final ProductBatchRepository productBatchRepository;
+    private final WarehouseConnectionRepository connectionRepository;
 
     public WarehouseService(WarehouseRepository warehouseRepository,
                             WarehouseStockRepository warehouseStockRepository,
                             ProductRepository productRepository,
                             UserRepository userRepository,
-                            ProductBatchRepository productBatchRepository) {
+                            ProductBatchRepository productBatchRepository,
+                            WarehouseConnectionRepository connectionRepository) {
         this.warehouseRepository = warehouseRepository;
         this.warehouseStockRepository = warehouseStockRepository;
         this.productRepository = productRepository;
         this.userRepository = userRepository;
         this.productBatchRepository = productBatchRepository;
+        this.connectionRepository = connectionRepository;
     }
 
     // -----------------------------------------------------------------------------------------
@@ -59,7 +65,9 @@ public class WarehouseService {
     @Transactional(readOnly = true)
     public List<WarehouseDto> findAllForCurrentUser() {
         List<Warehouse> warehouses;
-        if (isCurrentUserManager()) {
+        if (SecurityUtil.isPartnerSession()) {
+            warehouses = warehouseRepository.findAllById(partnerWarehouseIds());
+        } else if (isCurrentUserManager()) {
             warehouses = warehouseRepository.findAll();
         } else {
             warehouses = warehouseRepository.findAssignedToUser(SecurityUtil.currentUserId());
@@ -121,7 +129,9 @@ public class WarehouseService {
                         ws.getProduct().getName(),
                         ws.getProduct().getSku(),
                         ws.getQuantity(),
-                        ws.getProduct().getMinimumStock() != null ? ws.getProduct().getMinimumStock() : 0
+                        ws.getProduct().getMinimumStock() != null ? ws.getProduct().getMinimumStock() : 0,
+                        ws.getProduct().getPrice(),
+                        ws.getProduct().getCurrency()
                 ));
     }
 
@@ -220,6 +230,9 @@ public class WarehouseService {
      */
     @Transactional(readOnly = true)
     public List<Long> getAccessibleWarehouseIds() {
+        if (SecurityUtil.isPartnerSession()) {
+            return partnerWarehouseIds();
+        }
         if (isCurrentUserManager()) {
             return null; // managers see everything
         }
@@ -261,8 +274,31 @@ public class WarehouseService {
     }
 
     private boolean isUserAssignedToWarehouse(Long warehouseId) {
+        if (SecurityUtil.isPartnerSession()) {
+            return partnerWarehouseIds().contains(warehouseId);
+        }
         Long userId = SecurityUtil.currentUserId();
         return warehouseRepository.findAssignedToUser(userId)
                 .stream().anyMatch(w -> w.getId().equals(warehouseId));
+    }
+
+    /**
+     * The warehouses a visiting partner may touch inside this client company: exactly the ones the client
+     * assigned to the connection, and nothing else in the company.
+     *
+     * <p>Derived from the connection rather than from {@code user_warehouse} rows on purpose. Rows would
+     * have to be written for every one of the partner's staff when a connection starts and cleaned up when
+     * it ends or when they hire someone - and any gap in that bookkeeping is either a lockout or, far
+     * worse, lingering access to a company that already disconnected. Reading the connection cannot drift,
+     * and an empty assignment correctly grants nothing.</p>
+     */
+    private List<Long> partnerWarehouseIds() {
+        return connectionRepository
+                .findFirstByWarehouseCompanyIdAndClientCompanyIdAndStatus(
+                        SecurityUtil.currentHomeCompanyId(),
+                        SecurityUtil.currentCompanyId(),
+                        ConnectionStatus.ACTIVE)
+                .map(connection -> List.copyOf(connection.getWarehouseIds()))
+                .orElseGet(List::of);
     }
 }

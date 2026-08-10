@@ -1,5 +1,6 @@
 package com.example.kladdo.service;
 
+import com.example.kladdo.model.AuditAction;
 import com.example.kladdo.exception.ResourceNotFoundException;
 import com.example.kladdo.model.Category;
 import com.example.kladdo.model.CompanySettings;
@@ -32,6 +33,8 @@ public class ProductService {
     private final CompanySettingsService companySettingsService;
     private final WarehouseStockRepository warehouseStockRepository;
     private final ProductBatchRepository productBatchRepository;
+    private final PlanService planService;
+    private final AuditService auditService;
 
     public ProductService(ProductRepository productRepository,
                           CategoryService categoryService,
@@ -39,7 +42,9 @@ public class ProductService {
                           TaxRateRepository taxRateRepository,
                           CompanySettingsService companySettingsService,
                           WarehouseStockRepository warehouseStockRepository,
-                          ProductBatchRepository productBatchRepository) {
+                          ProductBatchRepository productBatchRepository,
+                          PlanService planService,
+                          AuditService auditService) {
         this.productRepository = productRepository;
         this.categoryService = categoryService;
         this.manufacturerService = manufacturerService;
@@ -47,6 +52,8 @@ public class ProductService {
         this.companySettingsService = companySettingsService;
         this.warehouseStockRepository = warehouseStockRepository;
         this.productBatchRepository = productBatchRepository;
+        this.planService = planService;
+        this.auditService = auditService;
     }
 
     /**
@@ -108,20 +115,29 @@ public class ProductService {
 
     @Transactional
     public Product save(Product product) {
-        // A brand-new product (no id yet) picks up the company's new-product defaults; existing
-        // products being re-saved (e.g. order stock adjustments) are left untouched.
+        // A brand-new product (no id yet) picks up the company's new-product defaults and counts against
+        // the plan's cap; existing products being re-saved (e.g. order stock adjustments) are untouched.
         if (product.getId() == null) {
+            planService.assertCanCreateProduct();
             applyNewProductDefaults(product);
         }
         // A blank SKU must be stored as NULL, not "" — the column is unique and many products have no
         // SKU (multiple NULLs are allowed, multiple ""s collide).
         product.setSku(blankToNull(product.getSku()));
         resolveTaxRate(product);
-        return productRepository.save(product);
+        boolean isNew = product.getId() == null;
+        Product saved = productRepository.save(product);
+        // Only audit genuinely new products: this method is also the re-save path for order stock
+        // adjustments, which would otherwise flood the trail with meaningless "product updated" lines.
+        if (isNew) {
+            auditService.record(AuditService.ENTITY_PRODUCT, saved.getId(), AuditAction.CREATE, saved.getName());
+        }
+        return saved;
     }
 
     @Transactional
     public Product create(Product product) {
+        planService.assertCanCreateProduct();
         Category category = categoryService.findById(product.getCategory().getId());
         Manufacturer manufacturer = manufacturerService.findById(product.getManufacturer().getId());
 
@@ -153,6 +169,26 @@ public class ProductService {
         if (product.getTaxRate() == null) {
             taxRateRepository.findFirstByIsDefaultTrue().ifPresent(product::setTaxRate);
         }
+        // A product with no explicit currency is priced in the company base currency.
+        if (product.getCurrency() == null || product.getCurrency().isBlank()) {
+            product.setCurrency(settings.getCurrency());
+        } else {
+            product.setCurrency(product.getCurrency().trim().toUpperCase());
+        }
+    }
+
+    /**
+     * The currency to store on an edited product: the requested code when supplied, otherwise the value
+     * already on the product, falling back to the company base currency.
+     */
+    private String resolveCurrency(String requested, String existing) {
+        if (requested != null && !requested.isBlank()) {
+            return requested.trim().toUpperCase();
+        }
+        if (existing != null && !existing.isBlank()) {
+            return existing;
+        }
+        return companySettingsService.getOrCreate().getCurrency();
     }
 
     /**
@@ -186,8 +222,11 @@ public class ProductService {
         product.setDescription(updatedProduct.getDescription());
         product.setImageUrls(updatedProduct.getImageUrls() == null ? new ArrayList<>() : updatedProduct.getImageUrls());
         product.setPrice(updatedProduct.getPrice());
+        product.setCurrency(resolveCurrency(updatedProduct.getCurrency(), product.getCurrency()));
         // stockQuantity is managed by warehouse operations — do not accept it from the product edit form.
         product.setMinimumStock(updatedProduct.getMinimumStock() == null ? 0 : updatedProduct.getMinimumStock());
+        // Null is meaningful here (no fixed batch size), so it is copied through as-is.
+        product.setReorderQuantity(updatedProduct.getReorderQuantity());
         product.setWarehouseMethod(updatedProduct.getWarehouseMethod() == null
                 ? WarehouseMethod.FEFO : updatedProduct.getWarehouseMethod());
         product.setActive(updatedProduct.getActive());
@@ -195,14 +234,19 @@ public class ProductService {
         product.setTaxRate(updatedProduct.getTaxRate());
         resolveTaxRate(product);
 
-        return productRepository.save(product);
+        Product saved = productRepository.save(product);
+        auditService.record(AuditService.ENTITY_PRODUCT, saved.getId(), AuditAction.UPDATE, saved.getName());
+        return saved;
     }
 
     @Transactional
     public void delete(Long id) {
+        Product product = findById(id);
+        String name = product.getName();
         warehouseStockRepository.deleteByProductId(id);
         productBatchRepository.deleteByProductId(id);
-        productRepository.delete(findById(id));
+        productRepository.delete(product);
+        auditService.record(AuditService.ENTITY_PRODUCT, id, AuditAction.DELETE, name);
     }
 
     /** Trims a string and returns null when it is null or blank (so the unique SKU stores NULL, not ""). */

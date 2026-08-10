@@ -9,12 +9,14 @@ import com.example.kladdo.dto.LotLookupDto;
 import com.example.kladdo.dto.ProductBatchDto;
 import com.example.kladdo.dto.ProductDetailsDto;
 import com.example.kladdo.dto.ProductWarehouseStockDto;
+import com.example.kladdo.dto.ReorderSuggestionDto;
 import com.example.kladdo.dto.StockTransferDto;
 import com.example.kladdo.dto.UpdateProductBatchRequest;
 import com.example.kladdo.model.Product;
 import com.example.kladdo.service.InventoryService;
 import com.example.kladdo.service.ProductAnalyticsService;
 import com.example.kladdo.service.ProductService;
+import com.example.kladdo.service.ReorderService;
 import com.example.kladdo.service.StockTransferService;
 import com.example.kladdo.service.WarehouseService;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,17 +37,30 @@ public class ProductController {
     private final InventoryService inventoryService;
     private final WarehouseService warehouseService;
     private final StockTransferService stockTransferService;
+    private final ReorderService reorderService;
 
     public ProductController(ProductService productService,
                              ProductAnalyticsService productAnalyticsService,
                              InventoryService inventoryService,
                              WarehouseService warehouseService,
-                             StockTransferService stockTransferService) {
+                             StockTransferService stockTransferService,
+                             ReorderService reorderService) {
         this.productService = productService;
         this.productAnalyticsService = productAnalyticsService;
         this.inventoryService = inventoryService;
         this.warehouseService = warehouseService;
         this.stockTransferService = stockTransferService;
+        this.reorderService = reorderService;
+    }
+
+    /**
+     * Products at or below their minimum stock, with a suggested order quantity and the price last paid.
+     * Read-only: turning these into an order goes through the normal purchase-order endpoint.
+     */
+    @GetMapping("/reorder-suggestions")
+    @PreAuthorize("@perm.canView(authentication, 'PRODUCTS')")
+    public List<ReorderSuggestionDto> getReorderSuggestions() {
+        return reorderService.suggestions();
     }
 
     @GetMapping

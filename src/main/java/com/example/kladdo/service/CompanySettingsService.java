@@ -5,6 +5,7 @@ import com.example.kladdo.dto.DisplaySettingsDto;
 import com.example.kladdo.model.CompanySettings;
 import com.example.kladdo.repository.CompanySettingsRepository;
 import com.example.kladdo.repository.TaxRateRepository;
+import com.example.kladdo.security.EncryptionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,11 +20,14 @@ public class CompanySettingsService {
 
     private final CompanySettingsRepository repository;
     private final TaxRateRepository taxRateRepository;
+    private final EncryptionService encryptionService;
 
     public CompanySettingsService(CompanySettingsRepository repository,
-                                  TaxRateRepository taxRateRepository) {
+                                  TaxRateRepository taxRateRepository,
+                                  EncryptionService encryptionService) {
         this.repository = repository;
         this.taxRateRepository = taxRateRepository;
+        this.encryptionService = encryptionService;
     }
 
     /** The company's settings, creating the default row if it does not exist yet. */
@@ -45,6 +49,14 @@ public class CompanySettingsService {
     public CompanySettingsDto update(CompanySettingsDto dto) {
         CompanySettings settings = getOrCreate();
         dto.applyTo(settings);
+        // Re-encrypt the SMTP password only when a new one was actually supplied; a blank/absent value
+        // means "keep the stored one" (the DTO never round-trips the existing password back to us).
+        if (dto.smtpPassword() != null && !dto.smtpPassword().isBlank()) {
+            settings.setSmtpPasswordEncrypted(encryptionService.encrypt(dto.smtpPassword()));
+        }
+        // Deliberately not audited: a settings save has no natural identifier and no per-field detail, so
+        // the trail only ever showed a contentless "Settings updated" line. The company's own identity
+        // (CompanyService) is still audited, because a rename is a meaningful, identifiable change.
         return CompanySettingsDto.from(repository.save(settings));
     }
 
@@ -120,6 +132,31 @@ public class CompanySettingsService {
 
     private static String formatPurchaseOrderNumber(int sequence) {
         return PURCHASE_ORDER_PREFIX + String.format("%06d", sequence);
+    }
+
+    /**
+     * The next tender number the create form should suggest, without advancing the counter. Unlike orders
+     * the prefix is configurable ({@link CompanySettings#getTenderNumberPrefix()}).
+     */
+    @Transactional(readOnly = true)
+    public String peekNextTenderNumber() {
+        CompanySettings settings = repository.findFirstByOrderByIdAsc().orElseGet(CompanySettings::new);
+        Integer last = settings.getLastTenderNumber();
+        return formatTenderNumber(settings, (last != null ? last : 0) + 1);
+    }
+
+    /** Reserves the next tender number and advances the counter (runs in the create transaction). */
+    @Transactional
+    public String allocateNextTenderNumber() {
+        CompanySettings settings = getOrCreate();
+        int next = (settings.getLastTenderNumber() != null ? settings.getLastTenderNumber() : 0) + 1;
+        settings.setLastTenderNumber(next);
+        repository.save(settings);
+        return formatTenderNumber(settings, next);
+    }
+
+    private static String formatTenderNumber(CompanySettings settings, int sequence) {
+        return settings.getTenderNumberPrefix() + String.format("%06d", sequence);
     }
 
     /** Display-only settings readable by any authenticated user (drives price rendering across the app). */

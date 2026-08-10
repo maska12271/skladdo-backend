@@ -1,5 +1,6 @@
 package com.example.kladdo.service;
 
+import com.example.kladdo.model.AuditAction;
 import com.example.kladdo.exception.ResourceNotFoundException;
 import com.example.kladdo.model.Client;
 import com.example.kladdo.repository.ClientRepository;
@@ -17,8 +18,11 @@ public class ClientService {
 
     private final ClientRepository clientRepository;
 
-    public ClientService(ClientRepository clientRepository) {
+    private final AuditService auditService;
+
+    public ClientService(ClientRepository clientRepository, AuditService auditService) {
         this.clientRepository = clientRepository;
+        this.auditService = auditService;
     }
 
     /**
@@ -65,7 +69,12 @@ public class ClientService {
         // A blank registration code must be stored as NULL, not "" — the column is unique, and several
         // clients legitimately have no code (multiple NULLs are allowed, multiple ""s are not).
         client.setRegistrationCode(blankToNull(client.getRegistrationCode()));
-        return clientRepository.save(client);
+        boolean isNew = client.getId() == null;
+        Client saved = clientRepository.save(client);
+        // Only a genuinely new record is a CREATE; this method is also the plain re-save path.
+        auditService.record(AuditService.ENTITY_CLIENT, saved.getId(),
+                isNew ? AuditAction.CREATE : AuditAction.UPDATE, saved.getName());
+        return saved;
     }
 
     public Client update(Long id, Client updatedClient) {
@@ -74,15 +83,26 @@ public class ClientService {
         client.setRegistrationCode(blankToNull(updatedClient.getRegistrationCode()));
         client.setEmail(updatedClient.getEmail());
         client.setPhone(updatedClient.getPhone());
+        client.setCountry(updatedClient.getCountry());
         client.setAddress(updatedClient.getAddress());
         client.setContactPerson(updatedClient.getContactPerson());
         client.setNotes(updatedClient.getNotes());
         client.setActive(updatedClient.getActive());
-        return clientRepository.save(client);
+        Client saved = clientRepository.save(client);
+        auditService.record(AuditService.ENTITY_CLIENT, saved.getId(), AuditAction.UPDATE, saved.getName());
+        return saved;
     }
 
     public void delete(Long id) {
-        clientRepository.delete(findById(id));
+        Client client = findById(id);
+        String name = client.getName();
+        clientRepository.delete(client);
+        auditService.record(AuditService.ENTITY_CLIENT, id, AuditAction.DELETE, name);
+    }
+
+    /** Countries used by this tenant's clients, most-used first (drives the country picker order). */
+    public List<String> getCountriesByUsage() {
+        return clientRepository.findCountriesByUsage();
     }
 
     /** Archives or restores a client. Archived clients are hidden from the default list and pickers. */

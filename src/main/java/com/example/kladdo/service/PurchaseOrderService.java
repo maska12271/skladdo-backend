@@ -2,9 +2,11 @@ package com.example.kladdo.service;
 
 import com.example.kladdo.dto.CreatePurchaseOrderRequest;
 import com.example.kladdo.dto.PurchaseOrderItemRequest;
+import com.example.kladdo.dto.UpdateFulfilmentRequest;
 import com.example.kladdo.dto.UpdatePurchaseOrderRequest;
 import com.example.kladdo.exception.BadRequestException;
 import com.example.kladdo.exception.ResourceNotFoundException;
+import com.example.kladdo.model.AuditAction;
 import com.example.kladdo.model.Manufacturer;
 import com.example.kladdo.model.OrderStatus;
 import com.example.kladdo.model.OrderStatusChange;
@@ -28,6 +30,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class PurchaseOrderService {
@@ -39,6 +44,8 @@ public class PurchaseOrderService {
     private final WarehouseService warehouseService;
     private final ProductBatchService productBatchService;
     private final CompanySettingsService settingsService;
+    private final ExchangeRateService exchangeRateService;
+    private final AuditService auditService;
 
     public PurchaseOrderService(PurchaseOrderRepository purchaseOrderRepository,
                                 ManufacturerService manufacturerService,
@@ -46,7 +53,9 @@ public class PurchaseOrderService {
                                 OrderStatusChangeRepository statusChangeRepository,
                                 WarehouseService warehouseService,
                                 ProductBatchService productBatchService,
-                                CompanySettingsService settingsService) {
+                                CompanySettingsService settingsService,
+                                ExchangeRateService exchangeRateService,
+                                AuditService auditService) {
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.manufacturerService = manufacturerService;
         this.productService = productService;
@@ -54,6 +63,8 @@ public class PurchaseOrderService {
         this.warehouseService = warehouseService;
         this.productBatchService = productBatchService;
         this.settingsService = settingsService;
+        this.exchangeRateService = exchangeRateService;
+        this.auditService = auditService;
     }
 
     @Transactional(readOnly = true)
@@ -111,6 +122,41 @@ public class PurchaseOrderService {
         return order;
     }
 
+    /**
+     * Records how much of each line physically arrived. Deliberately does <strong>not</strong> touch
+     * stock: stock still moves only when the order crosses into a stock-affecting status, so a delivery
+     * can be checked in and corrected without double-counting (and without disturbing the stock ledger,
+     * which reconstructs movements from those status transitions).
+     *
+     * <p><strong>Over-delivery is allowed through</strong>: recording more than was ordered is exactly the
+     * discrepancy a goods-receipt is meant to surface. That is the one way this differs from
+     * {@code SalesOrderService.updateFulfilment}, which caps at the ordered quantity because you cannot
+     * pick more than the customer asked for. Lines the request omits keep their current value.</p>
+     */
+    @Transactional
+    public PurchaseOrder updateReceipt(Long id, UpdateFulfilmentRequest request) {
+        PurchaseOrder order = findById(id);
+        Map<Long, Integer> received = request.lines().stream()
+                .collect(Collectors.toMap(UpdateFulfilmentRequest.LineFulfilment::lineId,
+                        UpdateFulfilmentRequest.LineFulfilment::quantity, (a, b) -> b));
+
+        // An unknown line id is a caller mistake either way - only the over-quantity rule differs here.
+        Set<Long> lineIds = order.getItems().stream().map(PurchaseOrderItem::getId).collect(Collectors.toSet());
+        for (Long lineId : received.keySet()) {
+            if (!lineIds.contains(lineId)) {
+                throw new BadRequestException("error.order.unknownLine", lineId);
+            }
+        }
+
+        for (PurchaseOrderItem item : order.getItems()) {
+            Integer quantity = received.get(item.getId());
+            if (quantity != null) {
+                item.setReceivedQuantity(quantity);
+            }
+        }
+        return purchaseOrderRepository.save(order);
+    }
+
     private static boolean isStockAffecting(OrderStatus status) {
         return status == OrderStatus.SHIPPED || status == OrderStatus.CLOSED;
     }
@@ -132,10 +178,14 @@ public class PurchaseOrderService {
                 request.getClosingDate(),
                 request.getExpectedDeliveryDate(),
                 request.getDeliveryPrice(),
+                request.getCurrency(),
+                request.getExchangeRate(),
                 request.getItems()
         );
         purchaseOrder.setInvoiceFileUrl(blankToNull(request.getInvoiceFileUrl()));
         purchaseOrder.setInvoiceFileName(blankToNull(request.getInvoiceFileName()));
+        exchangeRateService.recordUsedRate(purchaseOrder.getCurrency(), purchaseOrder.getExchangeRate());
+        purchaseOrder.setTenderId(request.getTenderId());
 
         if (isStockAffecting(purchaseOrder.getStatus())) {
             increaseStockForItems(purchaseOrder.getItems(), warehouse);
@@ -143,6 +193,7 @@ public class PurchaseOrderService {
 
         PurchaseOrder saved = purchaseOrderRepository.save(purchaseOrder);
         recordStatusChange(saved.getId(), null, saved.getStatus());
+        auditService.record(AuditService.ENTITY_PURCHASE_ORDER, saved.getId(), AuditAction.CREATE, saved.getOrderNumber());
         return saved;
     }
 
@@ -168,10 +219,14 @@ public class PurchaseOrderService {
                 request.getClosingDate(),
                 request.getExpectedDeliveryDate(),
                 request.getDeliveryPrice(),
+                request.getCurrency(),
+                request.getExchangeRate(),
                 request.getItems()
         );
         purchaseOrder.setInvoiceFileUrl(blankToNull(request.getInvoiceFileUrl()));
         purchaseOrder.setInvoiceFileName(blankToNull(request.getInvoiceFileName()));
+        exchangeRateService.recordUsedRate(purchaseOrder.getCurrency(), purchaseOrder.getExchangeRate());
+        purchaseOrder.setTenderId(request.getTenderId());
 
         OrderStatus newStatus = purchaseOrder.getStatus();
 
@@ -186,6 +241,7 @@ public class PurchaseOrderService {
         if (oldStatus != newStatus) {
             recordStatusChange(saved.getId(), oldStatus, newStatus);
         }
+        auditService.record(AuditService.ENTITY_PURCHASE_ORDER, saved.getId(), AuditAction.UPDATE, saved.getOrderNumber());
         return saved;
     }
 
@@ -196,7 +252,9 @@ public class PurchaseOrderService {
             decreaseStockForItems(purchaseOrder.getItems(), purchaseOrder.getWarehouse());
         }
         statusChangeRepository.deleteByOrderTypeAndOrderId(OrderType.PURCHASE, id);
+        String orderNumber = purchaseOrder.getOrderNumber();
         purchaseOrderRepository.delete(purchaseOrder);
+        auditService.record(AuditService.ENTITY_PURCHASE_ORDER, id, AuditAction.DELETE, orderNumber);
     }
 
     private void fillPurchaseOrderFromRequest(PurchaseOrder purchaseOrder,
@@ -209,16 +267,25 @@ public class PurchaseOrderService {
                                               LocalDate closingDate,
                                               LocalDate expectedDeliveryDate,
                                               BigDecimal deliveryPrice,
+                                              String currency,
+                                              BigDecimal exchangeRate,
                                               List<PurchaseOrderItemRequest> requestItems) {
         Manufacturer manufacturer = manufacturerService.findById(manufacturerId);
 
         purchaseOrder.setManufacturer(manufacturer);
+        purchaseOrder.setCurrency(resolveCurrency(currency, purchaseOrder.getCurrency()));
+        purchaseOrder.setExchangeRate(resolveExchangeRate(exchangeRate, purchaseOrder.getCurrency(), purchaseOrder.getExchangeRate()));
         // A blank number means "use the system-allocated one" - mirrors the sales-order numbering. The
         // frontend pre-fills the suggestion and sends it back blank when the user keeps it, so the
         // sequence only advances when the system number is actually used.
-        purchaseOrder.setOrderNumber(orderNumber == null || orderNumber.isBlank()
-                ? settingsService.allocateNextPurchaseOrderNumber()
-                : orderNumber);
+        //
+        // Only an order that has no number yet may take one: this method is shared with update(), where a
+        // blank field previously renumbered the order and burned a sequence number on every such edit.
+        if (orderNumber != null && !orderNumber.isBlank()) {
+            purchaseOrder.setOrderNumber(orderNumber);
+        } else if (purchaseOrder.getOrderNumber() == null || purchaseOrder.getOrderNumber().isBlank()) {
+            purchaseOrder.setOrderNumber(settingsService.allocateNextPurchaseOrderNumber());
+        }
         purchaseOrder.setStatus(status == null ? OrderStatus.NEW : status);
         purchaseOrder.setOrderDate(orderDate == null ? LocalDate.now() : orderDate);
         purchaseOrder.setClosingDate(closingDate);
@@ -276,6 +343,10 @@ public class PurchaseOrderService {
         }
         PurchaseOrder saved = purchaseOrderRepository.save(order);
         recordStatusChange(saved.getId(), oldStatus, newStatus);
+        // The OrderStatusChange row above drives this order's own timeline; this one puts the same event
+        // on the company-wide trail. See AuditLog for why both exist.
+        auditService.record(AuditService.ENTITY_PURCHASE_ORDER, saved.getId(), AuditAction.STATUS_CHANGE,
+                saved.getOrderNumber() + ": " + oldStatus + " -> " + newStatus);
         return saved;
     }
 
@@ -290,6 +361,34 @@ public class PurchaseOrderService {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /**
+     * The currency to store on the order: the requested code when supplied, otherwise the value already on
+     * the order (on edit), falling back to the company base currency (on create).
+     */
+    private String resolveCurrency(String requested, String existing) {
+        if (requested != null && !requested.isBlank()) {
+            return requested.trim().toUpperCase();
+        }
+        if (existing != null && !existing.isBlank()) {
+            return existing;
+        }
+        return settingsService.getOrCreate().getCurrency();
+    }
+
+    /**
+     * The rate to snapshot on the order (1 base = rate {@code resolvedCurrency}): 1 when the order is in
+     * the base currency, otherwise the supplied rate, falling back to the rate already on the order (edit).
+     */
+    private BigDecimal resolveExchangeRate(BigDecimal requested, String resolvedCurrency, BigDecimal existing) {
+        if (resolvedCurrency != null && resolvedCurrency.equalsIgnoreCase(settingsService.getOrCreate().getCurrency())) {
+            return BigDecimal.ONE;
+        }
+        if (requested != null && requested.signum() > 0) {
+            return requested;
+        }
+        return existing;
     }
 
     private void recordStatusChange(Long orderId, OrderStatus from, OrderStatus to) {

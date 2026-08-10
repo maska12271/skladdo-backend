@@ -40,10 +40,15 @@ public class Product {
     @Column(unique = true)
     private String sku;
 
+    // @NotNull as well as the non-null column: without it an omitted relation reached
+    // ProductService.update, which dereferences it, and surfaced as a 500 (or a 409 from the database on
+    // create) instead of a plain "this field is required".
+    @NotNull
     @ManyToOne
     @JoinColumn(nullable = false)
     private Manufacturer manufacturer;
 
+    @NotNull
     @ManyToOne
     @JoinColumn(nullable = false)
     private Category category;
@@ -66,6 +71,14 @@ public class Product {
     private BigDecimal price;
 
     /**
+     * ISO 4217 currency code the {@link #price} is quoted in. Nullable at the DB level so the column can be
+     * added to existing rows ({@code ddl-auto=update}); a {@code null} value is treated as the company base
+     * currency everywhere it is read, and the service stamps the base currency on new products.
+     */
+    @Column(length = 3)
+    private String currency;
+
+    /**
      * Tax rate applied to this product. Optional - when {@code null} the company default rate is used.
      * Prices are stored net of tax; the rate only drives tax-inclusive display and downstream invoicing.
      */
@@ -82,6 +95,17 @@ public class Product {
     @Min(0)
     @Column(nullable = false)
     private Integer minimumStock = 0;
+
+    /**
+     * How many units to put on a purchase order when this product runs low. Optional: when unset the
+     * reorder view suggests just enough to climb back to {@link #minimumStock}, which is usually too
+     * little to last, so setting an explicit batch size here gives a better suggestion.
+     *
+     * <p>Nullable so the column adds cleanly to an existing {@code product} table under
+     * {@code ddl-auto=update} - the same migration-friendly pattern as {@link #warehouseMethod}.</p>
+     */
+    @Min(0)
+    private Integer reorderQuantity;
 
     /**
      * Lot-consumption strategy used when selling this product. Kept nullable at the DB level so the

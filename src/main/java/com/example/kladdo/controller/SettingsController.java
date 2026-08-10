@@ -4,8 +4,11 @@ import com.example.kladdo.dto.CompanySettingsDto;
 import com.example.kladdo.dto.DisplaySettingsDto;
 import com.example.kladdo.dto.ModulePermissionDto;
 import com.example.kladdo.dto.TaxRateDto;
+import com.example.kladdo.dto.TestEmailRequest;
+import com.example.kladdo.dto.TestEmailResult;
 import com.example.kladdo.dto.UpdatePermissionsRequest;
 import com.example.kladdo.service.CompanySettingsService;
+import com.example.kladdo.service.EmailSendingService;
 import com.example.kladdo.service.InvoiceService;
 import com.example.kladdo.service.PermissionService;
 import com.example.kladdo.service.TaxRateService;
@@ -35,15 +38,18 @@ public class SettingsController {
     private final TaxRateService taxRateService;
     private final PermissionService permissionService;
     private final InvoiceService invoiceService;
+    private final EmailSendingService emailSendingService;
 
     public SettingsController(CompanySettingsService settingsService,
                               TaxRateService taxRateService,
                               PermissionService permissionService,
-                              InvoiceService invoiceService) {
+                              InvoiceService invoiceService,
+                              EmailSendingService emailSendingService) {
         this.settingsService = settingsService;
         this.taxRateService = taxRateService;
         this.permissionService = permissionService;
         this.invoiceService = invoiceService;
+        this.emailSendingService = emailSendingService;
     }
 
     // --- Display settings (any authenticated user) -----------------------------------------------
@@ -82,6 +88,16 @@ public class SettingsController {
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"invoice-preview.pdf\"")
                 .body(new ByteArrayResource(pdf));
+    }
+
+    /**
+     * Sends a test email to the supplied address using the company's saved SMTP settings, so an admin can
+     * confirm the configuration works. Returns the outcome (including the SMTP error on failure) rather
+     * than throwing, so the settings page can show a precise success/failure message.
+     */
+    @PostMapping("/email/test-send")
+    public TestEmailResult testEmail(@Valid @RequestBody TestEmailRequest request) {
+        return emailSendingService.sendTest(request.recipient());
     }
 
     // --- Tax rates -------------------------------------------------------------------------------

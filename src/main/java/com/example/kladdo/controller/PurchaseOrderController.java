@@ -2,6 +2,7 @@ package com.example.kladdo.controller;
 
 import com.example.kladdo.dto.CreatePurchaseOrderRequest;
 import com.example.kladdo.dto.OrderDetailsDto;
+import com.example.kladdo.dto.UpdateFulfilmentRequest;
 import com.example.kladdo.dto.UpdateInvoiceFileRequest;
 import com.example.kladdo.dto.UpdatePurchaseOrderRequest;
 import com.example.kladdo.dto.UpdateStatusRequest;
@@ -105,6 +106,21 @@ public class PurchaseOrderController {
     @PreAuthorize("@perm.canEdit(authentication, 'PURCHASE_ORDERS')")
     public PurchaseOrder updateStatus(@PathVariable Long id, @Valid @RequestBody UpdateStatusRequest request) {
         return purchaseOrderService.updateStatus(id, request.status());
+    }
+
+    /**
+     * Records goods-receipt progress against the order's lines and returns the refreshed details.
+     *
+     * <p>Open to warehouse staff who can post inventory movements as well as to users who can edit the
+     * order: checking a delivery in is their job, and it changes no order data beyond the received counts
+     * (in particular it never moves stock - that still happens on the status change).</p>
+     */
+    @PutMapping("/{id}/receipt")
+    @PreAuthorize("@perm.canEdit(authentication, 'PURCHASE_ORDERS') or @perm.canCreate(authentication, 'INVENTORY')")
+    public OrderDetailsDto updateReceipt(@PathVariable Long id,
+                                         @Valid @RequestBody UpdateFulfilmentRequest request) {
+        purchaseOrderService.updateReceipt(id, request);
+        return orderAnalyticsService.getPurchaseOrderDetails(id);
     }
 
     @DeleteMapping("/{id}")

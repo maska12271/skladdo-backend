@@ -42,6 +42,29 @@ public class SalesOrder {
 
     private LocalDate closingDate;
 
+    /**
+     * ISO 4217 currency code this order's money amounts are in. Nullable at the DB level so the column
+     * migrates onto existing rows ({@code ddl-auto=update}); a {@code null} value is treated as the company
+     * base currency, and the service stamps the base currency on new orders.
+     */
+    @Column(length = 3)
+    private String currency;
+
+    /**
+     * Exchange rate snapshotted when the order was saved: how many units of {@link #currency} one unit of
+     * the company base currency buys ({@code 1 base = rate foreign}). The order's amounts are stored in
+     * {@link #currency}; dividing by this rate gives the company-currency equivalent. Null/1 when the order
+     * is already in the base currency.
+     */
+    @Column(precision = 19, scale = 6)
+    private BigDecimal exchangeRate;
+
+    /**
+     * Optional tender this order belongs to. A plain id (not a mapped FK, like {@code SentEmail.templateId})
+     * so the order survives the tender being deleted and serializes without a lazy association.
+     */
+    private Long tenderId;
+
     private String deliveryAddress;
 
     @Column(nullable = false)

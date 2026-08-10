@@ -4,6 +4,7 @@ import com.example.kladdo.model.Category;
 import com.example.kladdo.model.Client;
 import com.example.kladdo.model.Company;
 import com.example.kladdo.model.CompanySettings;
+import com.example.kladdo.model.CompanyType;
 import com.example.kladdo.model.Manufacturer;
 import com.example.kladdo.model.OrderStatus;
 import com.example.kladdo.model.PartnerCategory;
@@ -22,7 +23,9 @@ import com.example.kladdo.model.Tender;
 import com.example.kladdo.model.TenderParticipant;
 import com.example.kladdo.model.User;
 import com.example.kladdo.model.UserPermission;
+import com.example.kladdo.model.ConnectionStatus;
 import com.example.kladdo.model.Warehouse;
+import com.example.kladdo.model.WarehouseConnection;
 import com.example.kladdo.model.WarehouseMethod;
 import com.example.kladdo.model.WarehouseStock;
 import com.example.kladdo.repository.CategoryRepository;
@@ -39,6 +42,7 @@ import com.example.kladdo.repository.TaxRateRepository;
 import com.example.kladdo.repository.TenderRepository;
 import com.example.kladdo.repository.UserPermissionRepository;
 import com.example.kladdo.repository.UserRepository;
+import com.example.kladdo.repository.WarehouseConnectionRepository;
 import com.example.kladdo.repository.WarehouseRepository;
 import com.example.kladdo.repository.WarehouseStockRepository;
 import com.example.kladdo.security.CustomUserDetails;
@@ -55,11 +59,14 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -85,6 +92,18 @@ public class DataInitializer implements CommandLineRunner {
 
     // A standalone, empty company (separate tenant from the demo) with its own owner account, for
     // entering real data. Created idempotently on startup and keyed on the owner email.
+    /**
+     * A third-party logistics company, so the warehouse-partner feature has something to show out of the
+     * box: a warehouse account already connected to the demo company. Its owner can switch between
+     * companies from the header picker.
+     */
+    private static final String LOGISTICS_COMPANY_NAME = "Baltic Logistics OÜ";
+    private static final String LOGISTICS_OWNER_NAME = "Rasmus Kask";
+    private static final String LOGISTICS_OWNER_EMAIL = "owner@balticlogistics.ee";
+    private static final String LOGISTICS_OWNER_PASSWORD = "logistics123";
+    /** The demo company's own warehouse that the partner is given access to. */
+    private static final String PARTNER_WAREHOUSE_NAME = "Satellite Depot";
+
     private static final String STANDALONE_COMPANY_NAME = "Symed";
     private static final String STANDALONE_OWNER_NAME = "Svetlana Zolotarjova";
     private static final String STANDALONE_OWNER_EMAIL = "svetlana.zolotarjova@symed.ee";
@@ -114,6 +133,7 @@ public class DataInitializer implements CommandLineRunner {
     private final WarehouseRepository warehouseRepository;
     private final WarehouseStockRepository warehouseStockRepository;
     private final ProductBatchRepository productBatchRepository;
+    private final WarehouseConnectionRepository warehouseConnectionRepository;
     private final PasswordEncoder passwordEncoder;
 
     private int poSeq = 0;
@@ -138,6 +158,7 @@ public class DataInitializer implements CommandLineRunner {
                            WarehouseRepository warehouseRepository,
                            WarehouseStockRepository warehouseStockRepository,
                            ProductBatchRepository productBatchRepository,
+                           WarehouseConnectionRepository warehouseConnectionRepository,
                            PasswordEncoder passwordEncoder) {
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
@@ -155,6 +176,7 @@ public class DataInitializer implements CommandLineRunner {
         this.warehouseRepository = warehouseRepository;
         this.warehouseStockRepository = warehouseStockRepository;
         this.productBatchRepository = productBatchRepository;
+        this.warehouseConnectionRepository = warehouseConnectionRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -171,6 +193,7 @@ public class DataInitializer implements CommandLineRunner {
         if (demo != null && hasBatchData(demo)) {
             backfillNewerFeatures(demo);
             ensureStandaloneCompany(STANDALONE_COMPANY_NAME, STANDALONE_OWNER_EMAIL, STANDALONE_OWNER_NAME, STANDALONE_OWNER_PASSWORD);
+            ensureWarehousePartnerDemo(demo); // after the standalone company: it sends the pending request
             return;
         }
         // No demo yet, or a pre-lot demo / other leftover data: wipe once so the fresh, lot-aware
@@ -249,6 +272,8 @@ public class DataInitializer implements CommandLineRunner {
 
         // A clean, standalone tenant to enter real data into, separate from the demo company above.
         ensureStandaloneCompany(STANDALONE_COMPANY_NAME, STANDALONE_OWNER_EMAIL, STANDALONE_OWNER_NAME, STANDALONE_OWNER_PASSWORD);
+        // A third company that runs a warehouse for the demo company, so partners are visible out of the box.
+        ensureWarehousePartnerDemo(company);
     }
 
     /**
@@ -267,6 +292,94 @@ public class DataInitializer implements CommandLineRunner {
         company = companyRepository.save(company);
         createUser(company, ownerEmail, ownerPassword, ownerName, Role.OWNER);
         log.info("Created standalone company '{}' with owner account {}.", companyName, ownerEmail);
+    }
+
+    /**
+     * Idempotently sets up the warehouse-partner scenario so the feature has something to show without
+     * anyone having to wire two companies together by hand: a logistics company connected to the demo
+     * company, exactly as if the demo company had issued a code and the logistics company had redeemed it.
+     * Its owner can then switch into the demo company from the header picker and work the warehouse they
+     * were given.
+     *
+     * <p>Keyed on the logistics owner's email (globally unique), so creating is a no-op once done - but
+     * <strong>not a blind return</strong>: a demo company seeded before the account types existed is
+     * already there and still reads as a business, which quietly disables the whole feature for it. So an
+     * existing one has its type corrected first.</p>
+     *
+     * <p>Note what it does <strong>not</strong> create. Baltic Logistics is a
+     * {@link CompanyType#WAREHOUSE} account, so it has no warehouse of its own and no catalogue to put in
+     * one; the site it works is {@value #PARTNER_WAREHOUSE_NAME}, which belongs to the demo company and
+     * always did. Nothing is mirrored or moved - the connection only decides who may reach it.</p>
+     */
+    private void ensureWarehousePartnerDemo(Company demoCompany) {
+        User existingOwner = userRepository.findByEmail(LOGISTICS_OWNER_EMAIL).orElse(null);
+        final Company logistics;
+        if (existingOwner != null) {
+            logistics = existingOwner.getCompany();
+            repairWarehouseAccountType(logistics);
+        } else {
+            Company newCompany = new Company();
+            newCompany.setName(LOGISTICS_COMPANY_NAME);
+            newCompany.setActive(true);
+            // A pure 3PL: no catalogue, orders or warehouses of its own — it works inside its clients.
+            newCompany.setType(CompanyType.WAREHOUSE);
+            logistics = companyRepository.save(newCompany);
+            createUser(logistics, LOGISTICS_OWNER_EMAIL, LOGISTICS_OWNER_PASSWORD, LOGISTICS_OWNER_NAME, Role.OWNER);
+        }
+        if (logistics == null) {
+            return;
+        }
+        ensureDemoConnection(logistics, demoCompany);
+    }
+
+    /**
+     * Connects the demo logistics company to the demo company if nothing live joins them yet — on a fresh
+     * database that is the initial wiring, and on an upgraded one it restores a connection that an earlier
+     * schema change could not carry across. Without it the demo silently has no partner at all.
+     */
+    private void ensureDemoConnection(Company logistics, Company demoCompany) {
+        boolean alreadyConnected = warehouseConnectionRepository
+                .findFirstByWarehouseCompanyIdAndClientCompanyIdAndStatus(
+                        logistics.getId(), demoCompany.getId(), ConnectionStatus.ACTIVE)
+                .isPresent();
+        if (alreadyConnected) {
+            return;
+        }
+
+        // One of the demo company's own warehouses is handed to the partner — the client picks which.
+        Long assigned = TenantContext.callAs(demoCompany.getId(), () -> warehouseRepository.findAll().stream()
+                .filter(w -> PARTNER_WAREHOUSE_NAME.equals(w.getName()))
+                .map(Warehouse::getId)
+                .findFirst()
+                .orElse(null));
+
+        WarehouseConnection active = new WarehouseConnection();
+        active.setWarehouseCompanyId(logistics.getId());
+        active.setClientCompanyId(demoCompany.getId());
+        active.setStatus(ConnectionStatus.ACTIVE);
+        active.setCanSeePrices(false);
+        if (assigned != null) {
+            active.setWarehouseIds(new LinkedHashSet<>(List.of(assigned)));
+        }
+        active.setCreatedAt(Instant.now().minus(Duration.ofDays(30)));
+        warehouseConnectionRepository.save(active);
+
+        log.info("Warehouse partner '{}' (owner {} / {}) works '{}' for {}.",
+                LOGISTICS_COMPANY_NAME, LOGISTICS_OWNER_EMAIL, LOGISTICS_OWNER_PASSWORD,
+                PARTNER_WAREHOUSE_NAME, demoCompany.getName());
+    }
+
+    /**
+     * Makes the demo logistics company a {@link CompanyType#WAREHOUSE} account when an older database left
+     * it reading as a business. The account type is immutable through the app - deliberately - so a
+     * database seeded before it existed has no other way back to a correct demo.
+     */
+    private void repairWarehouseAccountType(Company logistics) {
+        if (logistics == null || logistics.isWarehouseAccount()) {
+            return;
+        }
+        companyRepository.setTypeDirectly(logistics.getId(), CompanyType.WAREHOUSE.name());
+        log.info("Corrected '{}' to a WAREHOUSE account.", logistics.getName());
     }
 
     /** True when the demo company already has lot (batch) data — i.e. it post-dates lot/SKU tracking. */
@@ -1077,7 +1190,6 @@ public class DataInitializer implements CommandLineRunner {
             Tender tender = new Tender();
             tender.setTitle(scope + " for " + client.getName());
             tender.setTenderNumber("TND-" + publishedAt.getYear() + "-" + String.format("%03d", ++tenderSeq));
-            tender.setCustomerName(client.getName());
             tender.setClient(client);
             tender.setPublishedAt(publishedAt);
             tender.setDeadline(deadline);

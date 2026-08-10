@@ -40,7 +40,18 @@ public record DashboardStatsDto(
             int overdueCount,
             BigDecimal overdueTotal,
             BigDecimal penaltyAccruedTotal,
-            List<OverdueRow> topOverdue
+            List<OverdueRow> topOverdue,
+            // How the overdue money splits by how late it is. Covers every overdue invoice, not just the
+            // few in topOverdue, so the frontend can chart the aging without a second request.
+            List<AgingBucket> aging
+    ) {
+    }
+
+    /** One aging band of overdue receivables. {@code bucket} is a stable key the frontend labels. */
+    public record AgingBucket(
+            String bucket,      // D1_30 | D31_60 | D60_PLUS
+            int count,
+            BigDecimal amount
     ) {
     }
 

@@ -3,7 +3,9 @@ package com.example.kladdo.controller;
 import com.example.kladdo.dto.CreateWarehouseRequest;
 import com.example.kladdo.dto.UpdateWarehouseRequest;
 import com.example.kladdo.dto.WarehouseDto;
+import com.example.kladdo.dto.StockMovementDto;
 import com.example.kladdo.dto.WarehouseStockItemDto;
+import com.example.kladdo.service.StockLedgerService;
 import com.example.kladdo.service.WarehouseService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -22,9 +24,12 @@ import java.util.Map;
 public class WarehouseController {
 
     private final WarehouseService warehouseService;
+    private final StockLedgerService stockLedgerService;
 
-    public WarehouseController(WarehouseService warehouseService) {
+    public WarehouseController(WarehouseService warehouseService,
+                               StockLedgerService stockLedgerService) {
         this.warehouseService = warehouseService;
+        this.stockLedgerService = stockLedgerService;
     }
 
     @GetMapping
@@ -79,5 +84,16 @@ public class WarehouseController {
     @PreAuthorize("@perm.canReadReference(authentication, 'WAREHOUSES')")
     public Map<Long, Integer> getStockLevels(@PathVariable Long id) {
         return warehouseService.getStockLevels(id);
+    }
+
+    /**
+     * Stock ledger for one product in this warehouse: every receipt, issue, transfer and adjustment,
+     * newest first, with the on-hand balance after each. {@code productId} is required - a running balance
+     * only means anything for a single product.
+     */
+    @GetMapping("/{id}/movements")
+    @PreAuthorize("@perm.canView(authentication, 'WAREHOUSES')")
+    public List<StockMovementDto> getMovements(@PathVariable Long id, @RequestParam Long productId) {
+        return stockLedgerService.movements(id, productId);
     }
 }

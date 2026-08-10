@@ -1,7 +1,9 @@
 package com.example.kladdo.controller;
 
 import com.example.kladdo.dto.CreateUserRequest;
+import com.example.kladdo.dto.CreatedUserResponse;
 import com.example.kladdo.dto.ModulePermissionDto;
+import com.example.kladdo.dto.SetupLinkResponse;
 import com.example.kladdo.dto.UpdatePermissionsRequest;
 import com.example.kladdo.dto.UpdateUserRequest;
 import com.example.kladdo.dto.UpdateUserWarehousesRequest;
@@ -50,8 +52,17 @@ public class UserController {
     }
 
     @PostMapping
-    public UserDto create(@Valid @RequestBody CreateUserRequest request) {
+    public CreatedUserResponse create(@Valid @RequestBody CreateUserRequest request) {
         return userService.create(request);
+    }
+
+    /**
+     * (Re)sends the password setup/reset link to a user and returns the outcome. Used for the "resend
+     * setup email" (pending user) and "send password reset link" (active user) actions.
+     */
+    @PostMapping("/{id}/setup-email")
+    public SetupLinkResponse sendSetupEmail(@PathVariable Long id) {
+        return userService.sendSetupEmail(id);
     }
 
     @PutMapping("/{id}")

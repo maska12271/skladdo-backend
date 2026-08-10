@@ -4,93 +4,112 @@ import com.example.kladdo.dto.TenderParticipantRequestDto;
 import com.example.kladdo.dto.TenderParticipantResponseDto;
 import com.example.kladdo.exception.BadRequestException;
 import com.example.kladdo.exception.ResourceNotFoundException;
-import com.example.kladdo.model.Tender;
 import com.example.kladdo.model.TenderParticipant;
+import com.example.kladdo.model.TenderPart;
 import com.example.kladdo.repository.TenderParticipantRepository;
-import com.example.kladdo.repository.TenderRepository;
+import com.example.kladdo.repository.TenderPartRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
+/**
+ * Manages the participants of a single tender <em>part</em>: competitors we track plus our own company's
+ * (non-deletable) row. Enforces one winner per part and that a winner is, implicitly, participating.
+ */
 @Service
 @RequiredArgsConstructor
 public class TenderParticipantService {
 
-    private final TenderRepository tenderRepository;
+    private final TenderPartRepository tenderPartRepository;
     private final TenderParticipantRepository tenderParticipantRepository;
 
-    public List<TenderParticipantResponseDto> findByTenderId(Long tenderId) {
-        return tenderParticipantRepository.findByTenderId(tenderId)
-                .stream()
-                .map(this::toDto)
-                .toList();
-    }
-
-    public TenderParticipantResponseDto create(Long tenderId, TenderParticipantRequestDto dto) {
-        Tender tender = tenderRepository.findById(tenderId)
-                .orElseThrow(() -> new RuntimeException("Tender not found"));
-
+    @Transactional
+    public TenderParticipantResponseDto create(Long tenderId, Long partId, TenderParticipantRequestDto dto) {
+        TenderPart part = requirePart(tenderId, partId);
         if (Boolean.TRUE.equals(dto.getWinner())) {
-            clearWinner(tenderId);
+            clearWinner(partId);
         }
-
         TenderParticipant participant = new TenderParticipant();
-        participant.setTender(tender);
-        participant.setManufacturerName(dto.getManufacturerName());
-        participant.setOfferedPrice(dto.getOfferedPrice());
-        participant.setNotes(dto.getNotes());
-        participant.setWinner(Boolean.TRUE.equals(dto.getWinner()));
-
+        participant.setPart(part);
+        participant.setTender(part.getTender());
+        participant.setOwnCompany(false);
+        apply(participant, dto);
         return toDto(tenderParticipantRepository.save(participant));
     }
 
-    public TenderParticipantResponseDto update(Long tenderId, Long participantId, TenderParticipantRequestDto dto) {
-        TenderParticipant participant = tenderParticipantRepository.findById(participantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Participant not found with id: " + participantId));
-
-        if (!participant.getTender().getId().equals(tenderId)) {
-            throw new BadRequestException("error.tender.participantMismatch");
-        }
-
+    @Transactional
+    public TenderParticipantResponseDto update(Long tenderId, Long partId, Long participantId,
+                                               TenderParticipantRequestDto dto) {
+        TenderParticipant participant = requireParticipant(tenderId, partId, participantId);
         if (Boolean.TRUE.equals(dto.getWinner())) {
-            clearWinner(tenderId);
+            clearWinner(partId);
         }
-
-        participant.setManufacturerName(dto.getManufacturerName());
-        participant.setOfferedPrice(dto.getOfferedPrice());
-        participant.setNotes(dto.getNotes());
-        participant.setWinner(Boolean.TRUE.equals(dto.getWinner()));
-
+        apply(participant, dto);
         return toDto(tenderParticipantRepository.save(participant));
     }
 
-    public void delete(Long tenderId, Long participantId) {
-        TenderParticipant participant = tenderParticipantRepository.findById(participantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Participant not found with id: " + participantId));
-
-        if (!participant.getTender().getId().equals(tenderId)) {
-            throw new BadRequestException("error.tender.participantMismatch");
+    @Transactional
+    public void delete(Long tenderId, Long partId, Long participantId) {
+        TenderParticipant participant = requireParticipant(tenderId, partId, participantId);
+        if (Boolean.TRUE.equals(participant.getOwnCompany())) {
+            throw new BadRequestException("error.tender.ownCompanyUndeletable");
         }
-
         tenderParticipantRepository.delete(participant);
     }
 
-    private void clearWinner(Long tenderId) {
-        List<TenderParticipant> participants = tenderParticipantRepository.findByTenderId(tenderId);
-        for (TenderParticipant participant : participants) {
-            participant.setWinner(false);
+    /** Copies the editable fields. The own-company row keeps its (company) name; a winner is participating. */
+    private void apply(TenderParticipant participant, TenderParticipantRequestDto dto) {
+        if (!Boolean.TRUE.equals(participant.getOwnCompany())) {
+            participant.setManufacturerName(dto.getManufacturerName());
+        }
+        participant.setOfferedPrice(dto.getOfferedPrice());
+        participant.setNotes(dto.getNotes());
+        boolean winner = Boolean.TRUE.equals(dto.getWinner());
+        participant.setWinner(winner);
+        participant.setParticipating(winner || Boolean.TRUE.equals(dto.getParticipating()));
+    }
+
+    private void clearWinner(Long partId) {
+        List<TenderParticipant> participants = tenderParticipantRepository.findByPartIdOrderByOwnCompanyDescIdAsc(partId);
+        for (TenderParticipant p : participants) {
+            if (Boolean.TRUE.equals(p.getWinner())) {
+                p.setWinner(false);
+            }
         }
         tenderParticipantRepository.saveAll(participants);
     }
 
-    private TenderParticipantResponseDto toDto(TenderParticipant participant) {
+    private TenderPart requirePart(Long tenderId, Long partId) {
+        TenderPart part = tenderPartRepository.findById(partId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tender part not found with id: " + partId));
+        if (!part.getTender().getId().equals(tenderId)) {
+            throw new BadRequestException("error.tender.partMismatch");
+        }
+        return part;
+    }
+
+    private TenderParticipant requireParticipant(Long tenderId, Long partId, Long participantId) {
+        requirePart(tenderId, partId);
+        TenderParticipant participant = tenderParticipantRepository.findById(participantId)
+                .orElseThrow(() -> new ResourceNotFoundException("Participant not found with id: " + participantId));
+        if (participant.getPart() == null || !participant.getPart().getId().equals(partId)) {
+            throw new BadRequestException("error.tender.participantMismatch");
+        }
+        return participant;
+    }
+
+    /** Shared mapper (also used by {@code TenderPartService} when embedding participants in a part). */
+    static TenderParticipantResponseDto toDto(TenderParticipant p) {
         return new TenderParticipantResponseDto(
-                participant.getId(),
-                participant.getManufacturerName(),
-                participant.getOfferedPrice(),
-                participant.getNotes(),
-                participant.getWinner()
+                p.getId(),
+                p.getManufacturerName(),
+                p.getOfferedPrice(),
+                p.getNotes(),
+                p.getWinner(),
+                p.getOwnCompany(),
+                p.getParticipating()
         );
     }
 }

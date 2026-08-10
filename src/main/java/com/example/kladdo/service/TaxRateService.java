@@ -33,9 +33,9 @@ public class TaxRateService {
         TaxRate rate = new TaxRate();
         rate.setName(dto.name());
         rate.setPercentage(dto.percentage());
-        rate.setActive(dto.active());
+        rate.setActive(dto.activeOrDefault());
         // The very first rate is the default regardless of what the caller asked for.
-        boolean makeDefault = dto.isDefault() || repository.count() == 0;
+        boolean makeDefault = dto.isDefaultOrFalse() || repository.count() == 0;
         rate.setDefault(makeDefault);
         TaxRate saved = repository.save(rate);
         if (makeDefault) {
@@ -49,10 +49,10 @@ public class TaxRateService {
         TaxRate rate = require(id);
         rate.setName(dto.name());
         rate.setPercentage(dto.percentage());
-        rate.setActive(dto.active());
-        rate.setDefault(dto.isDefault());
+        rate.setActive(dto.activeOrDefault());
+        rate.setDefault(dto.isDefaultOrFalse());
         TaxRate saved = repository.save(rate);
-        if (dto.isDefault()) {
+        if (dto.isDefaultOrFalse()) {
             clearOtherDefaults(saved.getId());
         }
         return TaxRateDto.from(saved);

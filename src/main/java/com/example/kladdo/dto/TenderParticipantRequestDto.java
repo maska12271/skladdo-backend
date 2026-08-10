@@ -1,7 +1,6 @@
 package com.example.kladdo.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -12,9 +11,10 @@ public class TenderParticipantRequestDto {
     @NotBlank
     private String manufacturerName;
 
-    @NotNull
+    // Nullable: a participant can be marked as taking part before a price is known.
     private Double offeredPrice;
 
     private String notes;
     private Boolean winner = false;
+    private Boolean participating = false;
 }

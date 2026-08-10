@@ -1,6 +1,7 @@
 package com.example.kladdo.service;
 
 import com.example.kladdo.dto.ModulePermissionDto;
+import com.example.kladdo.model.CompanyType;
 import com.example.kladdo.model.DefaultUserPermission;
 import com.example.kladdo.model.PermissionModule;
 import com.example.kladdo.model.Role;
@@ -27,6 +28,20 @@ import java.util.Map;
  */
 @Service("perm")
 public class PermissionService {
+
+    /**
+     * The immutable grant every partner session runs on - see {@link #partnerPermissionMap()}. Built once
+     * because {@link #check} consults it on every authorization decision.
+     */
+    private static final Map<PermissionModule, ModulePermissionDto> PARTNER_PERMISSIONS = buildPartnerPermissions();
+
+    /**
+     * The same grant as detached {@link UserPermission} rows, so a partner session can be fed through the
+     * identical reference-dependency logic as a company's own warehouse staff instead of a parallel path.
+     */
+    private static final List<UserPermission> PARTNER_PERMISSION_ROWS = PARTNER_PERMISSIONS.values().stream()
+            .map(PermissionService::asPermissionRow)
+            .toList();
 
     private final UserPermissionRepository permissionRepository;
     private final DefaultUserPermissionRepository defaultPermissionRepository;
@@ -74,12 +89,20 @@ public class PermissionService {
      * </ul>
      */
     public boolean canReadReference(Authentication authentication, String module) {
+        if (ownsNoBusinessData(authentication)) {
+            return false;
+        }
         if (isManager(authentication)) {
             return true;
         }
         PermissionModule target = PermissionModule.valueOf(module);
-        Long userId = userId(authentication);
-        List<UserPermission> permissions = permissionRepository.findByUserId(userId);
+        // A partner session is governed by the connection's fixed grant, not by permission rows (which
+        // describe their access at home) - but it still has to go through the dependency derivation below.
+        // The preset grants orders without granting clients, and an order is unreadable without the client
+        // it is for, so short-circuiting here is what made the orders and products pages 403.
+        List<UserPermission> permissions = isPartnerSession(authentication)
+                ? PARTNER_PERMISSION_ROWS
+                : permissionRepository.findByUserId(userId(authentication));
 
         if (permissions.stream().anyMatch(p -> p.getModule() == target && p.isCanView())) {
             return true;
@@ -120,6 +143,14 @@ public class PermissionService {
      */
     public Map<PermissionModule, ModulePermissionDto> permissionMapFor(User user) {
         Map<PermissionModule, ModulePermissionDto> result = new EnumMap<>(PermissionModule.class);
+        // A warehouse account owns no business data, so its staff hold nothing at home whatever their role.
+        // Reporting that here is what keeps the client's navigation in step with what the API will allow.
+        if (user.getCompany() != null && user.getCompany().isWarehouseAccount()) {
+            for (PermissionModule module : PermissionModule.values()) {
+                result.put(module, ModulePermissionDto.none(module));
+            }
+            return result;
+        }
         if (isManagerRole(user.getRole())) {
             for (PermissionModule module : PermissionModule.values()) {
                 result.put(module, ModulePermissionDto.all(module));
@@ -223,17 +254,43 @@ public class PermissionService {
 
     /**
      * The access a newly created {@link Role#WAREHOUSE} account starts with: work the order flow
-     * (view + change status) and keep stock (view products, post inventory adjustments). Order
-     * fulfilment and stock-taking without the broader catalogue/admin reach a regular user gets.
+     * (view + change status), keep stock (view products, post inventory adjustments), and read the
+     * catalogue an order refers to - who it is for and who made the goods. Order fulfilment and
+     * stock-taking without the editing or admin reach a regular user gets.
+     *
+     * <p>Read-only on {@link PermissionModule#CLIENTS} and {@link PermissionModule#MANUFACTURERS}:
+     * fulfilling an order means knowing the customer and the maker, but neither is a warehouse's to
+     * change. Everything not named here is closed, including tenders and emails.</p>
      */
-    public List<ModulePermissionDto> warehouseDefaults() {
+    public static List<ModulePermissionDto> warehouseDefaults() {
         return List.of(
                 new ModulePermissionDto(PermissionModule.PURCHASE_ORDERS, true, false, true, false),
                 new ModulePermissionDto(PermissionModule.SALES_ORDERS, true, false, true, false),
                 new ModulePermissionDto(PermissionModule.PRODUCTS, true, false, false, false),
+                new ModulePermissionDto(PermissionModule.CLIENTS, true, false, false, false),
+                new ModulePermissionDto(PermissionModule.MANUFACTURERS, true, false, false, false),
                 new ModulePermissionDto(PermissionModule.INVENTORY, true, true, false, false),
                 new ModulePermissionDto(PermissionModule.WAREHOUSES, true, false, false, false)
         );
+    }
+
+    /**
+     * The access a warehouse operator's staff get inside a client company they are connected to: exactly
+     * the {@link #warehouseDefaults() warehouse defaults}, with every other module closed.
+     *
+     * <p>Fixed on purpose. These rows describe access to <em>someone else's</em> company, so they are not
+     * the operator's to widen, and the client should not have to police a permission editor per partner -
+     * the one thing they do choose is price visibility, which lives on the connection. It is also why the
+     * grant is computed rather than stored: there are no {@code UserPermission} rows to drift out of step,
+     * and revoking the connection revokes everything with it.</p>
+     */
+    public Map<PermissionModule, ModulePermissionDto> partnerPermissionMap() {
+        return PARTNER_PERMISSIONS;
+    }
+
+    /** This partner session's flags for one module (no access when the preset does not cover it). */
+    private static ModulePermissionDto partnerGrant(PermissionModule module) {
+        return PARTNER_PERMISSIONS.get(module);
     }
 
     /**
@@ -295,13 +352,67 @@ public class PermissionService {
     // ---------------------------------------------------------------------------------------------
 
     private boolean check(Authentication authentication, String module, java.util.function.Predicate<UserPermission> flag) {
+        if (ownsNoBusinessData(authentication)) {
+            return false;
+        }
         if (isManager(authentication)) {
             return true;
         }
         PermissionModule target = PermissionModule.valueOf(module);
+        if (isPartnerSession(authentication)) {
+            return flag.test(asPermissionRow(partnerGrant(target)));
+        }
         return permissionRepository.findByUserIdAndModule(userId(authentication), target)
                 .map(flag::test)
                 .orElse(false);
+    }
+
+    /**
+     * Adapts a grant into a detached {@link UserPermission} purely so partner sessions can reuse the same
+     * flag predicates as stored rows. Never saved.
+     */
+    private static UserPermission asPermissionRow(ModulePermissionDto grant) {
+        UserPermission row = new UserPermission();
+        row.setModule(grant.module());
+        row.setCanView(grant.canView());
+        row.setCanCreate(grant.canCreate());
+        row.setCanEdit(grant.canEdit());
+        row.setCanDelete(grant.canDelete());
+        return row;
+    }
+
+    /** Expands {@link #warehouseDefaults()} into a full module map, closing everything it does not name. */
+    private static Map<PermissionModule, ModulePermissionDto> buildPartnerPermissions() {
+        Map<PermissionModule, ModulePermissionDto> granted = new EnumMap<>(PermissionModule.class);
+        for (ModulePermissionDto dto : warehouseDefaults()) {
+            granted.put(dto.module(), dto);
+        }
+        Map<PermissionModule, ModulePermissionDto> result = new EnumMap<>(PermissionModule.class);
+        for (PermissionModule module : PermissionModule.values()) {
+            result.put(module, granted.getOrDefault(module, ModulePermissionDto.none(module)));
+        }
+        return java.util.Collections.unmodifiableMap(result);
+    }
+
+    private static boolean isPartnerSession(Authentication authentication) {
+        return authentication != null
+                && authentication.getPrincipal() instanceof CustomUserDetails details
+                && details.isPartnerSession();
+    }
+
+    /**
+     * True when the request works in a {@link CompanyType#WAREHOUSE} account's own tenant, which owns no
+     * catalogue, orders or tenders by definition - so every module is closed there.
+     *
+     * <p>Checked <em>before</em> the owner/administrator bypass on purpose: the account type is a hard
+     * separation rather than a permission, so being the owner of a warehouse account does not open a
+     * catalogue that is not supposed to exist. The same login is unaffected inside a client company, where
+     * it is an ordinary partner session governed by {@link #partnerPermissionMap()}.</p>
+     */
+    private static boolean ownsNoBusinessData(Authentication authentication) {
+        return authentication != null
+                && authentication.getPrincipal() instanceof CustomUserDetails details
+                && details.isWarehouseAccountAtHome();
     }
 
     /** True if the user holds any permission at all on the given module. */

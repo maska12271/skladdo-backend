@@ -32,6 +32,8 @@ public class Client {
 
     private String phone;
 
+    private String country;
+
     private String address;
 
     private String contactPerson;

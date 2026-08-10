@@ -4,11 +4,13 @@ import com.example.kladdo.model.Role;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 
+/**
+ * Create a new user. No password is set here: the account is created "awaiting password setup" and the
+ * user sets their own password through an emailed link (see {@code PasswordResetService}).
+ */
 public record CreateUserRequest(
         @NotBlank @Email String email,
-        @NotBlank @Size(min = 6, message = "Password must be at least 6 characters") String password,
         String fullName,
         @NotNull Role role,
         Boolean canSeePrices

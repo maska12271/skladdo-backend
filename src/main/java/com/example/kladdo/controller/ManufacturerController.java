@@ -48,6 +48,13 @@ public class ManufacturerController {
         return manufacturerService.findById(id);
     }
 
+    /** Countries used by this tenant's manufacturers, most-used first (orders the country picker). */
+    @GetMapping("/countries")
+    @PreAuthorize("@perm.canReadReference(authentication, 'MANUFACTURERS')")
+    public List<String> getCountries() {
+        return manufacturerService.getCountriesByUsage();
+    }
+
     @GetMapping("/{id}/details")
     @PreAuthorize("@perm.canReadReference(authentication, 'MANUFACTURERS')")
     public ManufacturerDetailsDto getDetails(@PathVariable Long id) {

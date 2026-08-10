@@ -27,6 +27,8 @@ public record OrderDetailsDto(
         String invoiceFileName,      // attached supplier invoice (purchase orders only); null otherwise
         boolean hasInvoiceFile,
         String notes,
+        String currency,             // ISO 4217 currency of this order's amounts (base currency when unset)
+        BigDecimal exchangeRate,     // 1 base = exchangeRate `currency`; divide amounts by it for base value
         List<Line> items,
         Totals totals,
         AuditInfo audit,
@@ -45,6 +47,7 @@ public record OrderDetailsDto(
     }
 
     public record Line(
+            Long lineId,             // the order-item id, so fulfilment can address a specific line
             Long productId,
             String productName,
             String sku,
@@ -52,7 +55,13 @@ public record OrderDetailsDto(
             BigDecimal unitPrice,
             BigDecimal lineTotal,
             BigDecimal estUnitCost,  // avg purchase cost per unit (sales lines only); null otherwise
-            List<LotUsage> lots      // lots this line was filled from (sales lines only); null otherwise
+            List<LotUsage> lots,     // lots this line was filled from (sales lines only); null otherwise
+            /**
+             * Units picked (sales) or received (purchase) so far. One field for both sides because the
+             * client renders the same progress UI either way, labelled per order type. Never affects
+             * stock - see the entity fields for why.
+             */
+            int fulfilledQuantity
     ) {
     }
 

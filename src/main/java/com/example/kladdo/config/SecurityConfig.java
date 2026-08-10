@@ -48,6 +48,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/login",
+                                // Public email endpoints: the tracking pixel and the Mailgun inbound-reply
+                                // webhook. Both run without a session/JWT (the webhook verifies its own HMAC
+                                // signature in-handler); the token in the URL/payload is the only identifier.
+                                "/api/public/**",
                                 "/v3/api-docs/**",
                                 "/api-docs/**",
                                 "/swagger-ui/**",
