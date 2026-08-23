@@ -23,8 +23,8 @@ jobs:
       - name: Make the Maven wrapper executable
         run: chmod +x mvnw
 
-      # The whole suite runs against an in-memory H2 (src/test/resources/application-test.properties),
-      # so there is no database service to stand up and no file lock to work around.
+      # The suite runs against a Postgres container started by Testcontainers (see
+      # support/TestcontainersConfiguration); ubuntu-latest runners have Docker available by default.
       - name: Run tests
         run: ./mvnw -B --no-transfer-progress test
 

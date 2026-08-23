@@ -33,14 +33,19 @@ build/
 .vscode/
 
 ### Runtime artifacts ###
-# H2 trace/lock files are regenerated at runtime — only the data file (data/tenderdb.mv.db) is
-# committed so everyone gets the same seeded demo dataset.
-data/*.trace.db
-data/*.lock.db
+# Local Postgres runs via docker-compose (see docker-compose.yml); the demo dataset comes from
+# DataInitializer (app.seed.enabled=true) rather than a committed database file.
 *.log
 
 # User-uploaded files are not part of the seeded dataset; keep the folder, ignore its contents.
 /uploads/*
 !/uploads/.gitkeep
+
+# Local-only real AWS credentials for S3 testing - never commit.
+application-local.properties
+
+# Rotated application logs from local runs.
+logs/
+
 # Added by code-review-graph
 .code-review-graph/

@@ -1,0 +1,30 @@
+# Local dev database + object storage. Start with `docker compose up -d`, then run the app as normal —
+# application.properties already points at this instance's default host/port/credentials.
+# Pinned project name so containers/volumes are `skladdo-*` regardless of the directory this runs from
+# (Compose otherwise derives it from the folder name, which here would be `backend`).
+name: skladdo
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: skladdo
+      POSTGRES_USER: skladdo
+      POSTGRES_PASSWORD: skladdo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  # S3-compatible storage for uploads (product images, company logo, PO invoice documents).
+  # application.properties points app.storage.s3.endpoint-override at this instance; the app
+  # creates its bucket on startup (see StorageConfig), so no manual bucket setup is needed here.
+  localstack:
+    image: localstack/localstack:3
+    environment:
+      SERVICES: s3
+    ports:
+      - "4566:4566"
+
+volumes:
+  postgres-data:
