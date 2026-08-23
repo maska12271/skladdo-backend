@@ -85,6 +85,11 @@ class InvoicePdfServiceRenderTest {
             public StoredObject open(String key) {
                 throw new UnsupportedOperationException();
             }
+
+            @Override
+            public void delete(String key) {
+                throw new UnsupportedOperationException();
+            }
         };
     }
 
