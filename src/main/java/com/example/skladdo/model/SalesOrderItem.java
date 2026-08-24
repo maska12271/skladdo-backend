@@ -25,9 +25,24 @@ public class SalesOrderItem {
     @Column(name = "company_id", updatable = false)
     private Long companyId;
 
+    /**
+     * The product this line sells, or {@code null} when the line sells a {@link #service} instead.
+     * Exactly one of the two is set - {@code SalesOrderService} enforces that on the way in, which is
+     * what makes {@code product == null} an unambiguous "this is a service line" everywhere downstream
+     * (the same shape {@code InvoiceItem} already uses).
+     */
     @ManyToOne
-    @JoinColumn(nullable = false)
+    @JoinColumn
     private Product product;
+
+    /**
+     * The service this line sells, or {@code null} for an ordinary product line. A service has no
+     * stock, so a line carrying one never reaches the warehouse: {@link #pickedQuantity} and
+     * {@link #batchAllocations} stay unset, and every stock query keys on {@code product.id}.
+     */
+    @ManyToOne
+    @JoinColumn(name = "service_id")
+    private Service service;
 
     @ManyToOne
     @JoinColumn(nullable = false)

@@ -113,6 +113,10 @@ public class PermissionService {
         boolean usesManufacturers = involvedIn(permissions, PermissionModule.PRODUCTS)
                 || involvedIn(permissions, PermissionModule.PURCHASE_ORDERS);
         boolean usesCategories = involvedIn(permissions, PermissionModule.PRODUCTS);
+        // A service is picked while building a sales order, and referenced from a tender requirement.
+        boolean usesServices = involvedIn(permissions, PermissionModule.SALES_ORDERS)
+                || involvedIn(permissions, PermissionModule.TENDERS);
+        boolean usesServiceCategories = involvedIn(permissions, PermissionModule.SERVICES);
         // Manufacturer categories (what a manufacturer produces) are read on the manufacturers page to
         // populate the filter and the edit-form picker.
         boolean usesPartnerCategories = involvedIn(permissions, PermissionModule.MANUFACTURERS);
@@ -124,9 +128,11 @@ public class PermissionService {
 
         return switch (target) {
             case PRODUCTS -> usesProducts;
+            case SERVICES -> usesServices;
             case MANUFACTURERS -> usesManufacturers;
             case CLIENTS -> usesClients;
             case CATEGORIES -> usesCategories;
+            case SERVICE_CATEGORIES -> usesServiceCategories;
             case PARTNER_CATEGORIES -> usesPartnerCategories;
             case WAREHOUSES -> usesWarehouses;
             default -> false;
@@ -268,6 +274,7 @@ public class PermissionService {
                 new ModulePermissionDto(PermissionModule.PURCHASE_ORDERS, true, false, true, false),
                 new ModulePermissionDto(PermissionModule.SALES_ORDERS, true, false, true, false),
                 new ModulePermissionDto(PermissionModule.PRODUCTS, true, false, false, false),
+                new ModulePermissionDto(PermissionModule.SERVICES, true, false, false, false),
                 new ModulePermissionDto(PermissionModule.CLIENTS, true, false, false, false),
                 new ModulePermissionDto(PermissionModule.MANUFACTURERS, true, false, false, false),
                 new ModulePermissionDto(PermissionModule.INVENTORY, true, true, false, false),

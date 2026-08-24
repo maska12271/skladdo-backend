@@ -28,6 +28,7 @@ class PermissionBoundaryIntegrationTest extends ApiTestBase {
     /** List endpoints, one per module, used for read probes. */
     private static final List<String> READ_PATHS = List.of(
             "/api/products?size=1",
+            "/api/services?size=1",
             "/api/manufacturers?size=1",
             "/api/clients?size=1",
             "/api/purchase-orders?size=1",
@@ -40,6 +41,7 @@ class PermissionBoundaryIntegrationTest extends ApiTestBase {
     /** Collection roots whose DELETE is guarded by that module's canDelete. */
     private static final List<String> DELETE_PATHS = List.of(
             "/api/products/999999",
+            "/api/services/999999",
             "/api/manufacturers/999999",
             "/api/clients/999999",
             "/api/purchase-orders/999999",
@@ -152,6 +154,7 @@ class PermissionBoundaryIntegrationTest extends ApiTestBase {
 
         assertThat(statusOfGet("/api/clients?size=1", salesUser)).as("clients: needed to pick a customer").isEqualTo(200);
         assertThat(statusOfGet("/api/products?size=1", salesUser)).as("products: needed for order lines").isEqualTo(200);
+        assertThat(statusOfGet("/api/services?size=1", salesUser)).as("services: an order line may sell one").isEqualTo(200);
         assertThat(statusOfGet("/api/warehouses", salesUser)).as("warehouses: needed to pick a warehouse").isEqualTo(200);
 
         assertThat(statusOfGet("/api/tenders?size=1", salesUser)).as("tenders: unrelated").isEqualTo(403);

@@ -18,6 +18,7 @@ public record DashboardStatsDto(
         List<MonthlyPoint> monthly,
         List<RankRow> topClients,
         List<RankRow> topProducts,
+        List<RankRow> topServices,
         List<ActivityItem> activity,
         Fulfilment fulfilment,
         ExpiryBlock expiry,

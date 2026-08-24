@@ -37,6 +37,7 @@ public class AuditService {
     public static final String ENTITY_CLIENT = "CLIENT";
     public static final String ENTITY_MANUFACTURER = "MANUFACTURER";
     public static final String ENTITY_PRODUCT = "PRODUCT";
+    public static final String ENTITY_SERVICE = "SERVICE";
     public static final String ENTITY_TENDER = "TENDER";
     /** The company's own identity (a rename is worth recording); its *settings* deliberately are not. */
     public static final String ENTITY_COMPANY = "COMPANY";

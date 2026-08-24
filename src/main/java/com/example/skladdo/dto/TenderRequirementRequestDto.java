@@ -11,6 +11,9 @@ public class TenderRequirementRequestDto {
     @NotBlank
     private String description;
 
+    /** Optional link to a catalogue service; null leaves the requirement as free text only. */
+    private Long serviceId;
+
     private Double quantity;
     private String unit;
 

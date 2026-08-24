@@ -48,9 +48,12 @@ public record OrderDetailsDto(
 
     public record Line(
             Long lineId,             // the order-item id, so fulfilment can address a specific line
-            Long productId,
+            Long productId,          // null when this line sells a service instead
             String productName,
             String sku,
+            Long serviceId,          // null on an ordinary product line; exactly one of the two is set
+            String serviceName,
+            String unit,             // what one of `quantity` is ("box", "kg"); products only, may be null
             int quantity,
             BigDecimal unitPrice,
             BigDecimal lineTotal,
