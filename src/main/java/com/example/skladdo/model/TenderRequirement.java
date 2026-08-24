@@ -33,6 +33,16 @@ public class TenderRequirement {
     @Column(length = 2000, nullable = false)
     private String description;
 
+    /**
+     * Optionally links this requirement to a {@link Service} from the catalogue. Purely a reference
+     * alongside the free-text {@link #description}, which stays the authoritative wording of what the
+     * tender asks for - a requirement is often phrased in the buyer's terms rather than ours, and many
+     * never correspond to a catalogue entry at all.
+     */
+    @ManyToOne
+    @JoinColumn(name = "service_id")
+    private Service service;
+
     /** Optional required quantity. */
     private Double quantity;
 

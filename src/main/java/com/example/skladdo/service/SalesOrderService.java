@@ -40,6 +40,7 @@ public class SalesOrderService {
     private final SalesOrderRepository salesOrderRepository;
     private final ClientService clientService;
     private final ProductService productService;
+    private final ServiceService serviceService;
     private final OrderStatusChangeRepository statusChangeRepository;
     private final WarehouseService warehouseService;
     private final ProductBatchService productBatchService;
@@ -50,6 +51,7 @@ public class SalesOrderService {
     public SalesOrderService(SalesOrderRepository salesOrderRepository,
                              ClientService clientService,
                              ProductService productService,
+                             ServiceService serviceService,
                              OrderStatusChangeRepository statusChangeRepository,
                              WarehouseService warehouseService,
                              ProductBatchService productBatchService,
@@ -59,6 +61,7 @@ public class SalesOrderService {
         this.salesOrderRepository = salesOrderRepository;
         this.clientService = clientService;
         this.productService = productService;
+        this.serviceService = serviceService;
         this.statusChangeRepository = statusChangeRepository;
         this.warehouseService = warehouseService;
         this.productBatchService = productBatchService;
@@ -324,7 +327,17 @@ public class SalesOrderService {
         BigDecimal taxAmount = BigDecimal.ZERO;
 
         for (SalesOrderItemRequest itemRequest : requestItems) {
-            Product product = productService.findById(itemRequest.getProductId());
+            // A line sells exactly one thing. Rejecting "both" as well as "neither" matters: with both
+            // set, whichever the code happened to read first would silently decide whether the line
+            // moves stock.
+            boolean hasProduct = itemRequest.getProductId() != null;
+            boolean hasService = itemRequest.getServiceId() != null;
+            if (hasProduct == hasService) {
+                throw new BadRequestException("error.order.itemProductOrService");
+            }
+            Product product = hasProduct ? productService.findById(itemRequest.getProductId()) : null;
+            com.example.skladdo.model.Service service =
+                    hasService ? serviceService.findById(itemRequest.getServiceId()) : null;
 
             if (itemRequest.getQuantity() == null || itemRequest.getQuantity() <= 0) {
                 throw new BadRequestException("error.quantityPositive");
@@ -337,6 +350,7 @@ public class SalesOrderService {
             SalesOrderItem item = new SalesOrderItem();
             item.setSalesOrder(salesOrder);
             item.setProduct(product);
+            item.setService(service);
             item.setQuantity(itemRequest.getQuantity());
             item.setUnitPrice(unitPrice);
             item.setDiscountPercent(discountPercent);
@@ -434,6 +448,9 @@ public class SalesOrderService {
 
     private void decreaseStockForItems(List<SalesOrderItem> items, Warehouse warehouse) {
         for (SalesOrderItem item : items) {
+            // A service line has nothing in a warehouse to move. This is the whole of the stock-side
+            // blast radius of services on orders - everything below the choke point stays product-only.
+            if (item.getProduct() == null) continue;
             Product product = productService.findById(item.getProduct().getId());
             // adjustWarehouseStock enforces the hard total-stock limit; allocation then spends specific
             // lots (FEFO/FIFO/LIFO), splitting across them and recording what was used on the line.
@@ -444,6 +461,7 @@ public class SalesOrderService {
 
     private void increaseStockForItems(List<SalesOrderItem> items, Warehouse warehouse) {
         for (SalesOrderItem item : items) {
+            if (item.getProduct() == null) continue;   // service line - see decreaseStockForItems
             Product product = productService.findById(item.getProduct().getId());
             // Returning stock (status reverted / order removed): put the spent units back into their
             // lots, then restore the warehouse total.

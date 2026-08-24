@@ -55,6 +55,7 @@ public class OrderAnalyticsService {
         List<Line> lines = new ArrayList<>();
         for (SalesOrderItem item : order.getItems()) {
             Product product = item.getProduct();
+            com.example.skladdo.model.Service service = item.getService();
             BigDecimal avgCost = product != null
                     ? avgCostCache.computeIfAbsent(product.getId(), this::weightedAvgPurchaseCost)
                     : BigDecimal.ZERO;
@@ -72,9 +73,14 @@ public class OrderAnalyticsService {
                     product != null ? product.getId() : null,
                     product != null ? product.getName() : null,
                     product != null ? product.getSku() : null,
+                    service != null ? service.getId() : null,
+                    service != null ? service.getName() : null,
+                    product != null ? product.getUnit() : null,
                     nz(item.getQuantity()),
                     nz(item.getUnitPrice()),
                     nz(item.getLineTotal()),
+                    // A service has no cost basis and no lots, so both stay empty for such a line -
+                    // product == null already short-circuits the two lookups above.
                     avgCost,
                     lots,
                     nz(item.getPickedQuantity())
@@ -115,6 +121,9 @@ public class OrderAnalyticsService {
                     product != null ? product.getId() : null,
                     product != null ? product.getName() : null,
                     product != null ? product.getSku() : null,
+                    null, // purchase orders are product-only; services are not bought through them
+                    null,
+                    product != null ? product.getUnit() : null,
                     nz(item.getQuantity()),
                     nz(item.getUnitPrice()),
                     nz(item.getLineTotal()),

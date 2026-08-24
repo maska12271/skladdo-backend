@@ -37,17 +37,20 @@ public class TenderPartService {
     private final TenderParticipantRepository tenderParticipantRepository;
     private final TenderRequirementRepository tenderRequirementRepository;
     private final CompanyRepository companyRepository;
+    private final ServiceService serviceService;
 
     public TenderPartService(TenderRepository tenderRepository,
                              TenderPartRepository tenderPartRepository,
                              TenderParticipantRepository tenderParticipantRepository,
                              TenderRequirementRepository tenderRequirementRepository,
-                             CompanyRepository companyRepository) {
+                             CompanyRepository companyRepository,
+                             ServiceService serviceService) {
         this.tenderRepository = tenderRepository;
         this.tenderPartRepository = tenderPartRepository;
         this.tenderParticipantRepository = tenderParticipantRepository;
         this.tenderRequirementRepository = tenderRequirementRepository;
         this.companyRepository = companyRepository;
+        this.serviceService = serviceService;
     }
 
     /** Per-tender summary of our participation across its parts. */
@@ -237,6 +240,9 @@ public class TenderPartService {
             TenderRequirement requirement = new TenderRequirement();
             requirement.setPart(part);
             requirement.setDescription(dto.getDescription().trim());
+            // Resolved through the service layer so a requirement can only ever point at this
+            // company's own catalogue.
+            requirement.setService(dto.getServiceId() != null ? serviceService.findById(dto.getServiceId()) : null);
             requirement.setQuantity(dto.getQuantity());
             requirement.setUnit(dto.getUnit() == null || dto.getUnit().isBlank() ? null : dto.getUnit().trim());
             requirement.setSampleQuantity(samplesRequired ? dto.getSampleQuantity() : null);
@@ -262,7 +268,12 @@ public class TenderPartService {
     private TenderPartResponseDto toDto(TenderPart part) {
         List<TenderRequirementResponseDto> requirements = tenderRequirementRepository
                 .findByPartIdOrderBySortOrderAscIdAsc(part.getId()).stream()
-                .map(r -> new TenderRequirementResponseDto(r.getId(), r.getDescription(), r.getQuantity(), r.getUnit(), r.getSampleQuantity(), r.getSortOrder()))
+                .map(r -> new TenderRequirementResponseDto(
+                        r.getId(),
+                        r.getDescription(),
+                        r.getService() != null ? r.getService().getId() : null,
+                        r.getService() != null ? r.getService().getName() : null,
+                        r.getQuantity(), r.getUnit(), r.getSampleQuantity(), r.getSortOrder()))
                 .toList();
         List<TenderParticipantResponseDto> participants = tenderParticipantRepository
                 .findByPartIdOrderByOwnCompanyDescIdAsc(part.getId()).stream()

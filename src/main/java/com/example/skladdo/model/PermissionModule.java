@@ -12,8 +12,19 @@ package com.example.skladdo.model;
  */
 public enum PermissionModule {
     PRODUCTS,
+    /**
+     * The catalogue of things sold that have a price but no stock - installation, consulting, a
+     * delivery fee. Separate from {@link #PRODUCTS} because the two have materially different fields
+     * and a company may well let someone manage one without the other.
+     */
+    SERVICES,
     MANUFACTURERS,
     CATEGORIES,
+    /**
+     * The taxonomy that classifies {@link #SERVICES}. Separate from {@link #CATEGORIES} (which
+     * classifies products) for the same reason the two catalogues are separate.
+     */
+    SERVICE_CATEGORIES,
     /**
      * The partner-category taxonomy used to group clients and manufacturers. Separate from
      * {@link #CATEGORIES} (which classifies products) and managed on its own page.

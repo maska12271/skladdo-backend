@@ -163,11 +163,17 @@ public class InvoiceService {
         // Line snapshot (discount/tax come from the order line, frozen at generation time).
         for (SalesOrderItem item : order.getItems()) {
             Product product = item.getProduct();
+            com.example.skladdo.model.Service service = item.getService();
             InvoiceItem line = new InvoiceItem();
             line.setInvoice(invoice);
             line.setProduct(product);
-            line.setProductName(product != null ? product.getName() : null);
-            line.setSku(product != null ? product.getSku() : null);
+            // productName/sku are frozen display text, not a product reference (see InvoiceItem), so a
+            // service line puts its own name/code through the same two fields rather than needing a
+            // parallel pair the PDF templates would all have to learn.
+            line.setProductName(product != null ? product.getName()
+                    : service != null ? service.getName() : null);
+            line.setSku(product != null ? product.getSku()
+                    : service != null ? service.getCode() : null);
             line.setQuantity(item.getQuantity());
             line.setUnitPrice(item.getUnitPrice());
             line.setDiscountPercent(item.getDiscountPercent());

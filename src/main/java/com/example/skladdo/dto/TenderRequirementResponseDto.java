@@ -10,6 +10,8 @@ import lombok.Setter;
 public class TenderRequirementResponseDto {
     private Long id;
     private String description;
+    private Long serviceId;
+    private String serviceName;
     private Double quantity;
     private String unit;
     private Integer sampleQuantity;

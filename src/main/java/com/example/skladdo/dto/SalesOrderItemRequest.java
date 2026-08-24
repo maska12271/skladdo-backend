@@ -8,8 +8,15 @@ import java.math.BigDecimal;
 
 public class SalesOrderItemRequest {
 
-    @NotNull
+    /**
+     * The product being sold, or null when this line sells a {@link #serviceId} instead. Exactly one of
+     * the two must be set - a cross-field rule, so it is enforced in {@code SalesOrderService} (with a
+     * translated {@code error.order.itemProductOrService}) rather than by a bean-validation annotation.
+     */
     private Long productId;
+
+    /** The service being sold, or null for an ordinary product line. See {@link #productId}. */
+    private Long serviceId;
 
     @NotNull
     @Min(1)
@@ -47,6 +54,14 @@ public class SalesOrderItemRequest {
 
     public void setProductId(Long productId) {
         this.productId = productId;
+    }
+
+    public Long getServiceId() {
+        return serviceId;
+    }
+
+    public void setServiceId(Long serviceId) {
+        this.serviceId = serviceId;
     }
 
     public Integer getQuantity() {

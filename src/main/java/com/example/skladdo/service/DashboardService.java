@@ -207,6 +207,23 @@ public class DashboardService {
             topProducts = rank(byProduct);
         }
 
+        // ---- top services (sold this month) ------------------------------------------------------
+        // Its own ranking rather than a row in the products one: a service has no units in a warehouse,
+        // so putting the two in one league table would rank "hours" against "boxes".
+        List<RankRow> topServices = List.of();
+        if (canSales) {
+            Map<Long, RankAccumulator> byService = new HashMap<>();
+            for (SalesOrderItem item : salesOrderItemRepository.findBySalesOrder_OrderDateGreaterThanEqual(monthStart)) {
+                SalesOrder so = item.getSalesOrder();
+                if (so != null && isCancelled(so.getStatus())) continue;
+                com.example.skladdo.model.Service s = item.getService();
+                if (s == null) continue;
+                byService.computeIfAbsent(s.getId(), k -> new RankAccumulator(s.getName()))
+                        .add(baseOf(item.getLineTotal(), so), nz(item.getQuantity()));
+            }
+            topServices = rank(byService);
+        }
+
         // ---- combined recent activity -----------------------------------------------------------
         List<ActivityItem> activity = new ArrayList<>();
         if (canSales) {
@@ -279,7 +296,7 @@ public class DashboardService {
             collected = collected(invoices, thisMonth, lastMonth);
         }
 
-        return new DashboardStatsDto(sales, purchases, productsBlock, tendersBlock, monthly, topClients, topProducts, activity, fulfilment, expiryBlock, receivables, collected);
+        return new DashboardStatsDto(sales, purchases, productsBlock, tendersBlock, monthly, topClients, topProducts, topServices, activity, fulfilment, expiryBlock, receivables, collected);
     }
 
     /**

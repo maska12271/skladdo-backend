@@ -76,6 +76,17 @@ public class SchemaMigrations implements CommandLineRunner {
         scopeUniqueToCompany("PURCHASE_ORDER", "ORDER_NUMBER");
         scopeUniqueToCompany("INVOICE", "INVOICE_NUMBER");
 
+        // A sales order line now sells either a product or a service, so its product is optional. The
+        // column was created NOT NULL and ddl-auto=update only ever adds - it will not relax an existing
+        // constraint - so on any populated database every service line would be rejected by the database
+        // itself, long after the service layer had accepted it.
+        dropNotNull("SALES_ORDER_ITEM", "PRODUCT_ID");
+
+        // A service carried a unit ("hour", "visit") for parity with a product, but it never reached an
+        // order line or an invoice, so it described nothing anyone could see. Dropped rather than left
+        // behind, so the table does not disagree with the entity.
+        dropColumn("SERVICE", "UNIT");
+
         // SENT_EMAIL.template_id is a plain, informational id (see SentEmail#templateId), not a live FK:
         // a sent email is an immutable audit record and templates must stay deletable. An early build
         // modelled it as a @ManyToOne, which would have created a foreign key that blocks deleting any
@@ -383,6 +394,35 @@ public class SchemaMigrations implements CommandLineRunner {
             }
         } catch (Exception e) {
             log.warn("Could not scope unique {}.{} to company: {}", table, column, e.getMessage());
+        }
+    }
+
+    /** Removes a column the entity no longer maps. Idempotent and defensive, like everything here. */
+    private void dropColumn(String table, String column) {
+        try {
+            if (!columnExists(table, column)) {
+                return;
+            }
+            jdbc.execute("ALTER TABLE " + table + " DROP COLUMN IF EXISTS " + column);
+            log.info("Dropped retired column {}.{}.", table, column);
+        } catch (Exception e) {
+            log.warn("Could not drop {}.{}: {}", table, column, e.getMessage());
+        }
+    }
+
+    /**
+     * Relaxes a {@code NOT NULL} column to nullable. Idempotent (dropping a constraint that is not there
+     * is a no-op in Postgres) and defensive: a missing table/column is skipped and any failure is logged
+     * without aborting startup.
+     */
+    private void dropNotNull(String table, String column) {
+        try {
+            if (!columnExists(table, column)) {
+                return;
+            }
+            jdbc.execute("ALTER TABLE " + table + " ALTER COLUMN " + column + " DROP NOT NULL");
+        } catch (Exception e) {
+            log.warn("Could not make {}.{} nullable: {}", table, column, e.getMessage());
         }
     }
 

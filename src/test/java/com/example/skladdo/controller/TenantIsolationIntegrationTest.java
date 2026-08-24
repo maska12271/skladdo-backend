@@ -34,6 +34,8 @@ class TenantIsolationIntegrationTest extends ApiTestBase {
 
         assertThat(contentSize(fresh, "/api/clients?size=50")).isZero();
         assertThat(contentSize(fresh, "/api/products?size=50")).isZero();
+        assertThat(contentSize(fresh, "/api/services?size=50")).isZero();
+        assertThat(contentSize(fresh, "/api/service-categories?size=50")).isZero();
         assertThat(contentSize(fresh, "/api/sales-orders?size=50")).isZero();
         assertThat(contentSize(fresh, "/api/purchase-orders?size=50")).isZero();
         assertThat(contentSize(fresh, "/api/tenders?size=50")).isZero();
