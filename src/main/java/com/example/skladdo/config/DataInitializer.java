@@ -23,6 +23,7 @@ import com.example.skladdo.model.Tender;
 import com.example.skladdo.model.TenderParticipant;
 import com.example.skladdo.model.User;
 import com.example.skladdo.model.UserPermission;
+import com.example.skladdo.model.AddonType;
 import com.example.skladdo.model.ConnectionStatus;
 import com.example.skladdo.model.Warehouse;
 import com.example.skladdo.model.WarehouseConnection;
@@ -45,6 +46,7 @@ import com.example.skladdo.repository.UserRepository;
 import com.example.skladdo.repository.WarehouseConnectionRepository;
 import com.example.skladdo.repository.WarehouseRepository;
 import com.example.skladdo.repository.WarehouseStockRepository;
+import com.example.skladdo.service.PlanService;
 import com.example.skladdo.security.CustomUserDetails;
 import com.example.skladdo.security.TenantContext;
 import org.slf4j.Logger;
@@ -135,6 +137,7 @@ public class DataInitializer implements CommandLineRunner {
     private final ProductBatchRepository productBatchRepository;
     private final WarehouseConnectionRepository warehouseConnectionRepository;
     private final PasswordEncoder passwordEncoder;
+    private final PlanService planService;
 
     private int poSeq = 0;
     private int soSeq = 0;
@@ -159,7 +162,8 @@ public class DataInitializer implements CommandLineRunner {
                            WarehouseStockRepository warehouseStockRepository,
                            ProductBatchRepository productBatchRepository,
                            WarehouseConnectionRepository warehouseConnectionRepository,
-                           PasswordEncoder passwordEncoder) {
+                           PasswordEncoder passwordEncoder,
+                           PlanService planService) {
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
         this.userPermissionRepository = userPermissionRepository;
@@ -178,6 +182,7 @@ public class DataInitializer implements CommandLineRunner {
         this.productBatchRepository = productBatchRepository;
         this.warehouseConnectionRepository = warehouseConnectionRepository;
         this.passwordEncoder = passwordEncoder;
+        this.planService = planService;
     }
 
     @Override
@@ -253,6 +258,11 @@ public class DataInitializer implements CommandLineRunner {
             saveAttributed(buildPurchaseOrders(manufacturers, products, start, today, mainWarehouse, satellite), authors.purchase(), purchaseOrderRepository);
             saveAttributed(buildSalesOrders(clients, products, start, today, mainWarehouse, satellite), authors.sales(), salesOrderRepository);
             tenderRepository.saveAll(buildTenders(clients, manufacturers, start, today));
+
+            // The demo showcases tenders and manufacturer-email outreach, so it has to be sold both -
+            // otherwise the very data just seeded sits behind a page nobody can reach.
+            planService.activateAddon(AddonType.TENDERS);
+            planService.activateAddon(AddonType.MANUFACTURER_EMAILS);
 
             log.info("====================================================================");
             log.info("Seeded demo company '{}' with 3 years of data:", company.getName());
