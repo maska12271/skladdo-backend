@@ -17,7 +17,10 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
+        // A retired account is filtered out here as well as in AuthService, so nothing that authenticates
+        // by any route - a still-valid JWT included - can resolve one back into a principal.
         return userRepository.findByEmailIgnoreCase(email)
+                .filter(user -> !user.isDeleted())
                 .map(CustomUserDetails::new)
                 .orElseThrow(() -> new UsernameNotFoundException("No account found for email: " + email));
     }

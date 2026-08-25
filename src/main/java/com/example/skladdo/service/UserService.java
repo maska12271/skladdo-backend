@@ -104,6 +104,7 @@ public class UserService {
         user.setFullName(request.fullName());
         user.setRole(request.role());
         user.setCanSeePrices(request.canSeePrices() == null ? Boolean.TRUE : request.canSeePrices());
+        applyAvatar(user, request.avatarKey(), request.avatarIcon(), request.avatarColor());
         // Created without a usable password: a random hash keeps the NOT NULL column satisfied while
         // being impossible to guess, and the pending flag blocks login until the user sets their own.
         user.setPasswordHash(passwordEncoder.encode(UUID.randomUUID().toString()));
@@ -120,10 +121,11 @@ public class UserService {
         if (isRestricted(saved.getRole())) {
             permissionService.applyDefaultPermissions(saved);
         }
-        // Auto-send the "set your password" invitation. Best-effort: if the platform SMTP sender isn't
-        // configured the response still carries the copyable link so the admin can share it manually.
+        // The invitation link is minted but NOT sent: the account exists the moment this returns, and how
+        // the colleague hears about it is then the administrator's choice - emailed from here, or copied
+        // and passed on themselves. `POST /users/{id}/setup-email` is the send half.
         auditService.record(AuditService.ENTITY_USER, saved.getId(), AuditAction.CREATE, saved.getEmail());
-        SetupLinkResponse invite = passwordResetService.issueForUser(saved);
+        SetupLinkResponse invite = passwordResetService.issueForUser(saved, false);
         return new CreatedUserResponse(UserDto.from(saved), invite.emailSent(), invite.setupLink(), invite.expiresAt());
     }
 
@@ -143,6 +145,7 @@ public class UserService {
         if (request.canSeePrices() != null) {
             user.setCanSeePrices(request.canSeePrices());
         }
+        applyAvatar(user, request.avatarKey(), request.avatarIcon(), request.avatarColor());
 
         boolean nowRestricted = isRestricted(request.role());
         User saved = userRepository.save(user);
@@ -158,15 +161,75 @@ public class UserService {
         return UserDto.from(saved);
     }
 
+    /**
+     * Writes an avatar onto {@code user}: either an uploaded picture or a preset icon, never both.
+     *
+     * <p>The upload wins when both arrive, and whichever loses is cleared - otherwise an account that
+     * switched from a photo to an icon would keep the photo in the column and go on showing it, since the
+     * key is what the client renders first.</p>
+     */
+    static void applyAvatar(User user, String avatarKey, String avatarIcon, String avatarColor) {
+        String key = blankToNull(avatarKey);
+        if (key != null) {
+            user.setAvatarKey(key);
+            user.setAvatarIcon(null);
+            user.setAvatarColor(null);
+            return;
+        }
+        user.setAvatarKey(null);
+        user.setAvatarIcon(blankToNull(avatarIcon));
+        user.setAvatarColor(blankToNull(avatarColor));
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    /**
+     * Permanently retires an account.
+     *
+     * <p>The row is kept and stamped {@code deletedAt} rather than removed. Half the application records
+     * who created or last touched something by user id, and those columns are plain ids with no foreign
+     * key behind them - so actually deleting the row would not fail, it would quietly turn every one of
+     * those references into a blank. Keeping it means the audit trail still names a person; everything
+     * else behaves as though the account is gone.</p>
+     *
+     * <p>Its permissions, warehouse assignments and any outstanding password-setup link go for real: they
+     * grant access, and a retired account must not carry any. That also removes the rows that genuinely do
+     * hold a foreign key to the user, which is what used to make deleting fail with "this record is still
+     * used by other data" for any account that had ever been sent an invitation.</p>
+     *
+     * <p>One-way on purpose. There is no un-delete, which is what separates this from archiving.</p>
+     */
+    @org.springframework.transaction.annotation.Transactional
     public void delete(Long id) {
-        User user = requireSameCompany(id);
+        User user = requireSameCompanyIncludingDeleted(id);
         guardNotSelf(user, "error.user.cannotDeleteSelf");
         if (user.getRole() == Role.OWNER) {
             throw new ForbiddenException("error.user.ownerCannotDelete");
         }
+        if (user.isDeleted()) {
+            return;
+        }
+
         permissionService.clearPermissions(user.getId());
-        userRepository.delete(user);
-        auditService.record(AuditService.ENTITY_USER, user.getId(), AuditAction.DELETE, user.getEmail());
+        user.getWarehouses().clear();
+        passwordResetService.revokeTokensFor(user.getId());
+
+        // Recorded before the address is released, so the trail keeps the real one.
+        String originalEmail = user.getEmail();
+        auditService.record(AuditService.ENTITY_USER, user.getId(), AuditAction.DELETE, originalEmail);
+
+        user.setDeletedAt(java.time.Instant.now());
+        // Belt and braces for every path that asks "may this account act?" without knowing about deletion.
+        user.setActive(false);
+        user.setArchived(true);
+        // Frees the address for re-use. The column is unique, so a retired row holding on to it would make
+        // the same person impossible to invite back - which is a strange thing for "deleted" to mean. The
+        // tombstone is unique by id and sits on a reserved TLD (RFC 2606), so it can never collide and can
+        // never be a real inbox; the address it replaces is in the audit entry written just above.
+        user.setEmail(tombstoneEmail(user.getId()));
+        userRepository.save(user);
     }
 
     /**
@@ -234,7 +297,30 @@ public class UserService {
         return role == Role.USER || role == Role.WAREHOUSE;
     }
 
+    /**
+     * The user with this id inside the caller's company, or 404.
+     *
+     * <p>A retired account reads as absent here, which is what closes every write path against it at once -
+     * editing, archiving, permissions, re-inviting. Its row exists only so old records can still name it,
+     * and that is not a reason to let anyone act on it again. {@link #delete} looks it up separately so
+     * deleting twice stays harmless rather than 404ing.</p>
+     */
     private User requireSameCompany(Long id) {
+        return userRepository.findByIdAndCompanyId(id, SecurityUtil.currentCompanyId())
+                .filter(user -> !user.isDeleted())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+    }
+
+    /**
+     * The address a retired account keeps instead of the one it gave up. Unique per account and
+     * undeliverable by construction - {@code .invalid} is reserved precisely so it can never resolve.
+     */
+    static String tombstoneEmail(Long userId) {
+        return "deleted+" + userId + "@removed.invalid";
+    }
+
+    /** As above but tolerating an already-retired account, so {@link #delete} is idempotent. */
+    private User requireSameCompanyIncludingDeleted(Long id) {
         return userRepository.findByIdAndCompanyId(id, SecurityUtil.currentCompanyId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
     }

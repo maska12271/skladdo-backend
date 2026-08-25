@@ -13,6 +13,14 @@ public record CreateUserRequest(
         @NotBlank @Email String email,
         String fullName,
         @NotNull Role role,
-        Boolean canSeePrices
+        Boolean canSeePrices,
+        /**
+         * Optional avatar, set by the administrator on the user's behalf: either an uploaded picture's
+         * storage key, or a preset icon + colour. The user can change it themselves afterwards
+         * ({@code PUT /api/auth/me/avatar}); this only saves them from starting with a blank one.
+         */
+        String avatarKey,
+        String avatarIcon,
+        String avatarColor
 ) {
 }

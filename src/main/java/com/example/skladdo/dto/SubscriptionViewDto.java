@@ -33,8 +33,8 @@ public record SubscriptionViewDto(
     public record UsageItem(String resource, long used, int limit) {
     }
 
-    /** A plan the company can switch to, with its caps and price. */
-    public record PlanOption(String plan, BigDecimal monthlyPrice, int maxUsers, int maxManufacturers, int maxProducts) {
+    /** A plan the company can switch to, with its seat cap and price. Seats are all a tier meters. */
+    public record PlanOption(String plan, BigDecimal monthlyPrice, int maxUsers) {
     }
 
     /** An add-on in the store, with whether the company currently has it and any pending cancellation. */

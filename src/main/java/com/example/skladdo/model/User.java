@@ -102,6 +102,52 @@ public class User {
     private String language;
 
     /**
+     * When this account was permanently retired, or {@code null} while it is a live account.
+     *
+     * <p>Deleting a user does not remove the row, and that is deliberate: half the application records who
+     * created or last touched something by id, so a removed row turns years of history into blanks. The
+     * row stays so those references keep resolving to a name, and everything else behaves as though the
+     * account is gone - it is absent from the user list, blocked from signing in, and does not occupy a
+     * seat against the plan.</p>
+     *
+     * <p>Unlike {@link #archived} this is a one-way door: there is no un-delete, which is what makes it
+     * usable as "remove this person" rather than "suspend them for now".</p>
+     */
+    private Instant deletedAt;
+
+    /** True once the account has been permanently retired - see {@link #deletedAt}. */
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
+
+    /**
+     * Storage key of an uploaded profile picture, or {@code null} when the account has none. A key, never
+     * a URL - it is presigned on demand at render time, exactly like a product image (see
+     * {@code StorageService}).
+     *
+     * <p>Takes precedence over {@link #avatarIcon}: an account that has uploaded a photo is showing the
+     * photo, whatever preset it picked before.</p>
+     */
+    @Column(length = 1000)
+    private String avatarKey;
+
+    /**
+     * A preset avatar for accounts that would rather not upload a photo: the name of one of the icons the
+     * client offers, paired with {@link #avatarColor}. Stored as a plain string rather than an enum so
+     * adding an icon to the picker stays a frontend-only change - and so it never needs the database enum
+     * widened, which is its own trap under {@code ddl-auto=update}.
+     *
+     * <p>Both nullable, so the columns add cleanly to existing accounts; with neither set the client falls
+     * back to the initials circle it has always drawn.</p>
+     */
+    @Column(length = 40)
+    private String avatarIcon;
+
+    /** Palette token for {@link #avatarIcon} (e.g. "teal"). Meaningless on its own. */
+    @Column(length = 20)
+    private String avatarColor;
+
+    /**
      * Whether this account operates the platform itself (the Skladdo admin panel) rather than a company.
      * It is a <em>system</em> capability, not a company role: it reads and administers every tenant, so
      * nothing inside the application may grant it. The flag is reconciled at startup from the

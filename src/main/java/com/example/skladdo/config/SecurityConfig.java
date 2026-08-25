@@ -1,5 +1,7 @@
 package com.example.skladdo.config;
 
+import com.example.skladdo.model.AddonType;
+import com.example.skladdo.security.AddonAuthorization;
 import com.example.skladdo.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,11 +27,14 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final CorsConfigurationSource corsConfigurationSource;
+    private final AddonAuthorization addons;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
-                          CorsConfigurationSource corsConfigurationSource) {
+                          CorsConfigurationSource corsConfigurationSource,
+                          AddonAuthorization addons) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.corsConfigurationSource = corsConfigurationSource;
+        this.addons = addons;
     }
 
     @Bean
@@ -55,6 +60,17 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/swagger-ui.html"
                         ).permitAll()
+                        // Purchasable features, closed off entirely until the company pays for them. These
+                        // sit above the blanket "/api/**" rule, which only asks for a session. The public
+                        // tracking pixel and inbound-reply webhook are untouched: they are matched by the
+                        // permitAll block above, and belong to mail already sent.
+                        .requestMatchers("/api/tenders/**").access(addons.requires(AddonType.TENDERS))
+                        .requestMatchers(
+                                "/api/email-templates/**",
+                                "/api/sent-emails/**",
+                                "/api/sent-email-batches/**",
+                                "/api/manufacturers/emails/**"
+                        ).access(addons.requires(AddonType.MANUFACTURER_EMAILS))
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll()
                 )

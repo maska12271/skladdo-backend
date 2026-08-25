@@ -15,6 +15,15 @@ public record AdminCompanyDetailDto(
         AdminCompanyDto company,
         Instant currentPeriodStart,
         Boolean cancelAtPeriodEnd,
+        /** Bytes this company holds in object storage (uploads), and how many objects that is. */
+        long storageBytes,
+        long storageFiles,
+        /**
+         * Bytes its rows occupy in the database. Row data only - Postgres cannot report a per-tenant share
+         * of a shared table, so this sums the actual width of the rows and reads slightly under the true
+         * on-disk figure rather than guessing at page and index overhead.
+         */
+        long databaseBytes,
         List<Member> users
 ) {
     public record Member(

@@ -22,17 +22,14 @@ public class ManufacturerService {
 
     private final ManufacturerRepository manufacturerRepository;
     private final PartnerCategoryRepository partnerCategoryRepository;
-    private final PlanService planService;
 
     private final AuditService auditService;
 
     public ManufacturerService(ManufacturerRepository manufacturerRepository,
                                PartnerCategoryRepository partnerCategoryRepository,
-                               PlanService planService,
                                AuditService auditService) {
         this.manufacturerRepository = manufacturerRepository;
         this.partnerCategoryRepository = partnerCategoryRepository;
-        this.planService = planService;
         this.auditService = auditService;
     }
 
@@ -74,10 +71,6 @@ public class ManufacturerService {
     }
 
     public Manufacturer save(Manufacturer manufacturer) {
-        // A brand-new manufacturer counts against the plan's cap; re-saving an existing one does not.
-        if (manufacturer.getId() == null) {
-            planService.assertCanCreateManufacturer();
-        }
         manufacturer.setCategories(resolveCategories(manufacturer.getCategories()));
         boolean isNew = manufacturer.getId() == null;
         Manufacturer saved = manufacturerRepository.save(manufacturer);

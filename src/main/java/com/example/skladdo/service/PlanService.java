@@ -10,8 +10,6 @@ import com.example.skladdo.model.PlanType;
 import com.example.skladdo.model.SubscriptionStatus;
 import com.example.skladdo.repository.CompanyAddonRepository;
 import com.example.skladdo.repository.CompanySubscriptionRepository;
-import com.example.skladdo.repository.ManufacturerRepository;
-import com.example.skladdo.repository.ProductRepository;
 import com.example.skladdo.repository.UserRepository;
 import com.example.skladdo.security.CustomUserDetails;
 import com.example.skladdo.security.SecurityUtil;
@@ -51,21 +49,15 @@ public class PlanService {
     private final CompanySubscriptionRepository subscriptionRepository;
     private final CompanyAddonRepository addonRepository;
     private final UserRepository userRepository;
-    private final ManufacturerRepository manufacturerRepository;
-    private final ProductRepository productRepository;
     private final com.example.skladdo.repository.CompanyRepository companyRepository;
 
     public PlanService(CompanySubscriptionRepository subscriptionRepository,
                        CompanyAddonRepository addonRepository,
                        UserRepository userRepository,
-                       ManufacturerRepository manufacturerRepository,
-                       ProductRepository productRepository,
                        com.example.skladdo.repository.CompanyRepository companyRepository) {
         this.subscriptionRepository = subscriptionRepository;
         this.addonRepository = addonRepository;
         this.userRepository = userRepository;
-        this.manufacturerRepository = manufacturerRepository;
-        this.productRepository = productRepository;
         this.companyRepository = companyRepository;
     }
 
@@ -291,17 +283,6 @@ public class PlanService {
                 "error.plan.userLimit");
     }
 
-    public void assertCanCreateManufacturer() {
-        checkLimit(getOrCreateSubscription().getPlan().getMaxManufacturers(),
-                manufacturerRepository.count(),
-                "error.plan.manufacturerLimit");
-    }
-
-    public void assertCanCreateProduct() {
-        checkLimit(getOrCreateSubscription().getPlan().getMaxProducts(),
-                productRepository.count(),
-                "error.plan.productLimit");
-    }
 
     public void assertTendersEnabled() {
         if (!hasAddon(AddonType.TENDERS)) {
@@ -353,24 +334,18 @@ public class PlanService {
         Long companyId = SecurityUtil.currentCompanyId();
 
         // A warehouse account is on the free plan and has nothing to buy: no other plan it may switch to,
-        // and the add-ons (tenders, manufacturer emails) all belong to selling goods it never sells. Its
-        // catalogue counts are structurally zero too, so only the user count says anything. Reporting that
-        // as empty lists keeps the billing tab honest without it having to know about account types.
+        // and the add-ons (tenders, manufacturer emails) all belong to selling goods it never sells.
+        // Reporting those as empty lists keeps the billing tab honest without it having to know about
+        // account types.
         boolean freePlan = !plan.isSelectable();
 
-        List<SubscriptionViewDto.UsageItem> usage = freePlan
-                ? List.of(new SubscriptionViewDto.UsageItem("USERS",
-                        userRepository.countSeatsInUse(companyId), plan.getMaxUsers()))
-                : List.of(
-                        new SubscriptionViewDto.UsageItem("USERS", userRepository.countSeatsInUse(companyId), plan.getMaxUsers()),
-                        new SubscriptionViewDto.UsageItem("MANUFACTURERS", manufacturerRepository.count(), plan.getMaxManufacturers()),
-                        new SubscriptionViewDto.UsageItem("PRODUCTS", productRepository.count(), plan.getMaxProducts())
-                );
+        // Seats are the only metered resource - see PlanType - so there is one usage row for every plan.
+        List<SubscriptionViewDto.UsageItem> usage = List.of(new SubscriptionViewDto.UsageItem(
+                "USERS", userRepository.countSeatsInUse(companyId), plan.getMaxUsers()));
 
         List<SubscriptionViewDto.PlanOption> plans = freePlan ? List.of() : Arrays.stream(PlanType.values())
                 .filter(PlanType::isSelectable)
-                .map(p -> new SubscriptionViewDto.PlanOption(p.name(), p.getMonthlyPrice(),
-                        p.getMaxUsers(), p.getMaxManufacturers(), p.getMaxProducts()))
+                .map(p -> new SubscriptionViewDto.PlanOption(p.name(), p.getMonthlyPrice(), p.getMaxUsers()))
                 .toList();
 
         List<SubscriptionViewDto.AddonOption> addons = new ArrayList<>();

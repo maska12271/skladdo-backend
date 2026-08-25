@@ -90,6 +90,8 @@ public class AdminService {
     private final CompanyRepository companyRepository;
     private final UserRepository userRepository;
     private final CompanySubscriptionRepository subscriptionRepository;
+    private final com.example.skladdo.repository.StoredFileRepository storedFileRepository;
+    private final com.example.skladdo.repository.TenantFootprintRepository footprintRepository;
     private final PlanService planService;
     private final PasswordResetService passwordResetService;
     private final PasswordEncoder passwordEncoder;
@@ -97,12 +99,16 @@ public class AdminService {
     public AdminService(CompanyRepository companyRepository,
                         UserRepository userRepository,
                         CompanySubscriptionRepository subscriptionRepository,
+                        com.example.skladdo.repository.StoredFileRepository storedFileRepository,
+                        com.example.skladdo.repository.TenantFootprintRepository footprintRepository,
                         PlanService planService,
                         PasswordResetService passwordResetService,
                         PasswordEncoder passwordEncoder) {
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.storedFileRepository = storedFileRepository;
+        this.footprintRepository = footprintRepository;
         this.planService = planService;
         this.passwordResetService = passwordResetService;
         this.passwordEncoder = passwordEncoder;
@@ -260,10 +266,20 @@ public class AdminService {
                         u.getActive(), u.getArchived(), u.getPasswordSetupPending(), u.getLastLoginAt()))
                 .toList();
 
+        // What this customer actually costs to host, in the two places they take up room. Computed here
+        // rather than in the list: the database figure scans every table for the company, which is fine
+        // once for one company and not fine once per row of a page.
+        List<Object[]> storage = storedFileRepository.sumSizeForCompanyIgnoringTenant(id);
+        long storageBytes = storage.isEmpty() ? 0 : ((Number) storage.get(0)[0]).longValue();
+        long storageFiles = storage.isEmpty() ? 0 : ((Number) storage.get(0)[1]).longValue();
+
         return new AdminCompanyDetailDto(
                 summary,
                 subscription == null ? null : subscription.periodStart(),
                 subscription == null ? null : subscription.cancelAtPeriodEnd(),
+                storageBytes,
+                storageFiles,
+                footprintRepository.rowBytesFor(id),
                 users);
     }
 

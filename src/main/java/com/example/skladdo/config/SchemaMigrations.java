@@ -1,5 +1,6 @@
 package com.example.skladdo.config;
 
+import com.example.skladdo.model.PermissionModule;
 import com.example.skladdo.model.PlanType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +17,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Lightweight schema fix-ups that Hibernate's {@code ddl-auto=update} cannot perform on an existing
@@ -92,6 +95,22 @@ public class SchemaMigrations implements CommandLineRunner {
         // modelled it as a @ManyToOne, which would have created a foreign key that blocks deleting any
         // template ever used. Drop it if present so template deletion works regardless of build history.
         dropForeignKeysOn("SENT_EMAIL", "TEMPLATE_ID");
+
+        // Hibernate renders an @Enumerated(STRING) column as a CHECK constraint listing the values that
+        // existed when the table was created, and ddl-auto=update never widens it. So every enum value
+        // added since then is rejected by the database with a 23514, surfacing as an unhelpful "this
+        // action conflicts with existing data" 409 long after the service layer accepted the row.
+        //
+        // PermissionModule gained SERVICES and SERVICE_CATEGORIES with the services catalogue, which made
+        // creating ANY user in a restricted role fail: the default-permission rows include one per module.
+        // Add a line here whenever an enum behind a persisted column gains a value.
+        widenEnumCheck("USER_PERMISSION", "MODULE", PermissionModule.class);
+        widenEnumCheck("DEFAULT_USER_PERMISSION", "MODULE", PermissionModule.class);
+
+        // Deleting a user releases its email address so the same person can be invited back. Accounts
+        // retired by the build before that rule are still sitting on theirs, which is exactly the state
+        // the rule exists to prevent.
+        releaseDeletedUserEmails();
 
         // The switch to S3 storage: LOGO_URL/INVOICE_FILE_URL/PRODUCT_IMAGE.IMAGE_URL held local
         // /uploads/<file> paths; the entities now hold bare S3 keys in a same-shaped sibling column
@@ -423,6 +442,89 @@ public class SchemaMigrations implements CommandLineRunner {
             jdbc.execute("ALTER TABLE " + table + " ALTER COLUMN " + column + " DROP NOT NULL");
         } catch (Exception e) {
             log.warn("Could not make {}.{} nullable: {}", table, column, e.getMessage());
+        }
+    }
+
+    /**
+     * Rebuilds the CHECK constraint behind an {@code @Enumerated(STRING)} column so it accepts every value
+     * the Java enum currently declares.
+     *
+     * <p>Hibernate writes that constraint once, when it creates the table, and {@code ddl-auto=update}
+     * only ever <em>adds</em> - it will not widen an existing constraint. An enum value added later is
+     * therefore accepted by the application and refused by the database, which is both invisible in code
+     * review and hard to read at runtime: the driver raises SQLSTATE 23514 and the caller is told the row
+     * "conflicts with existing data".</p>
+     *
+     * <p>Rewritten only when it is actually out of date, so an up-to-date database is left untouched and
+     * says nothing in the log. The constraint is looked up by definition rather than by Hibernate's
+     * {@code <table>_<column>_check} naming, so one created under a different name is still replaced
+     * instead of being left behind to reject the same rows.</p>
+     */
+    private void widenEnumCheck(String table, String column, Class<? extends Enum<?>> type) {
+        try {
+            if (!columnExists(table, column)) {
+                return;
+            }
+            List<String> wanted = Arrays.stream(type.getEnumConstants()).map(Enum::name).toList();
+            List<String> stale = jdbc.queryForList(
+                    "SELECT con.conname FROM pg_constraint con "
+                            + "JOIN pg_class c ON c.oid = con.conrelid "
+                            + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                            + "WHERE con.contype = 'c' AND n.nspname = current_schema() "
+                            + "AND LOWER(c.relname) = LOWER(?) "
+                            + "AND pg_get_constraintdef(con.oid) ILIKE ?",
+                    String.class, table, "%(" + column.toLowerCase() + ")%");
+
+            // Nothing to do when every value the enum knows is already listed by every constraint found.
+            boolean current = !stale.isEmpty() && stale.stream().allMatch(name -> {
+                String definition = jdbc.queryForObject(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = ?",
+                        String.class, name);
+                return definition != null && wanted.stream().allMatch(v -> definition.contains("'" + v + "'"));
+            });
+            if (current) {
+                return;
+            }
+
+            for (String name : stale) {
+                jdbc.execute("ALTER TABLE " + table + " DROP CONSTRAINT IF EXISTS " + name);
+            }
+            String values = wanted.stream().map(v -> "'" + v + "'").collect(Collectors.joining(","));
+            jdbc.execute("ALTER TABLE " + table + " ADD CONSTRAINT " + table.toLowerCase() + "_"
+                    + column.toLowerCase() + "_check CHECK (" + column + " IN (" + values + "))");
+            log.info("Widened the {}.{} check constraint to the {} values {} currently declares.",
+                    table, column, wanted.size(), type.getSimpleName());
+        } catch (Exception e) {
+            log.warn("Could not widen the check constraint on {}.{}: {}", table, column, e.getMessage());
+        }
+    }
+
+    /**
+     * Gives retired accounts the tombstone address that {@code UserService.delete} now assigns, so the
+     * address they were holding becomes available again.
+     *
+     * <p>{@code APP_USER.EMAIL} is unique, so a deleted row keeping its address makes that person
+     * impossible to invite back - and "deleted" quietly meaning "this address is burned forever" is not
+     * something anyone would guess. Rows retired before the release rule existed are still like that;
+     * this brings them into line. The address is not lost: the audit entry written at deletion holds it.
+     *
+     * <p>Idempotent - a row already on a tombstone is skipped by the {@code NOT LIKE}.</p>
+     */
+    private void releaseDeletedUserEmails() {
+        try {
+            if (!columnExists("APP_USER", "DELETED_AT")) {
+                return;
+            }
+            int freed = jdbc.update("""
+                    UPDATE APP_USER
+                    SET EMAIL = 'deleted+' || ID || '@removed.invalid'
+                    WHERE DELETED_AT IS NOT NULL AND EMAIL NOT LIKE 'deleted+%@removed.invalid'
+                    """);
+            if (freed > 0) {
+                log.info("Released the email addresses of {} previously deleted account(s).", freed);
+            }
+        } catch (Exception e) {
+            log.warn("Could not release deleted accounts' email addresses: {}", e.getMessage());
         }
     }
 
