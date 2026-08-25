@@ -50,6 +50,7 @@ public class DashboardService {
     private final TenderRepository tenderRepository;
     private final ProductBatchRepository productBatchRepository;
     private final InvoiceRepository invoiceRepository;
+    private final PlanService planService;
 
     public DashboardService(PermissionService permissionService,
                             ProductRepository productRepository,
@@ -58,7 +59,8 @@ public class DashboardService {
                             SalesOrderItemRepository salesOrderItemRepository,
                             TenderRepository tenderRepository,
                             ProductBatchRepository productBatchRepository,
-                            InvoiceRepository invoiceRepository) {
+                            InvoiceRepository invoiceRepository,
+                            PlanService planService) {
         this.permissionService = permissionService;
         this.productRepository = productRepository;
         this.salesOrderRepository = salesOrderRepository;
@@ -67,6 +69,7 @@ public class DashboardService {
         this.tenderRepository = tenderRepository;
         this.productBatchRepository = productBatchRepository;
         this.invoiceRepository = invoiceRepository;
+        this.planService = planService;
     }
 
     @Transactional(readOnly = true)
@@ -74,7 +77,10 @@ public class DashboardService {
         boolean canSales = permissionService.canView(auth, "SALES_ORDERS");
         boolean canPurchases = permissionService.canView(auth, "PURCHASE_ORDERS");
         boolean canProducts = permissionService.canView(auth, "PRODUCTS");
-        boolean canTenders = permissionService.canView(auth, "TENDERS");
+        // Both halves have to hold: the company must pay for tenders at all, and this user must be
+        // allowed to see them. Without the first, a company that has not bought the add-on would still be
+        // handed tender counts and a tender widget on a dashboard whose Tenders page is gone.
+        boolean canTenders = planService.hasAddon(AddonType.TENDERS) && permissionService.canView(auth, "TENDERS");
         boolean canInvoices = permissionService.canView(auth, "INVOICES");
 
         YearMonth thisMonth = YearMonth.now();

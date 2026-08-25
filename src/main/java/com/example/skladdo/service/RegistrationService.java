@@ -3,6 +3,7 @@ package com.example.skladdo.service;
 import com.example.skladdo.dto.LoginResponse;
 import com.example.skladdo.dto.RegisterRequest;
 import com.example.skladdo.exception.BadRequestException;
+import com.example.skladdo.model.AddonType;
 import com.example.skladdo.model.Company;
 import com.example.skladdo.model.CompanyType;
 import com.example.skladdo.model.InviteLink;
@@ -14,6 +15,10 @@ import com.example.skladdo.repository.UserRepository;
 import com.example.skladdo.security.TenantContext;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Public self-service signup: provisions a brand-new company with an OWNER account, starts its
@@ -81,6 +86,14 @@ public class RegistrationService {
                 ? invite.getPlan()
                 : resolvePlan(accountType, request.plan());
 
+        // Every rejection has to happen before the first save. Nothing here runs in one transaction - the
+        // class javadoc explains why - so a throw after `companyRepository.save` leaves a real company and
+        // owner behind that nobody asked for. An unknown add-on name is such a rejection: the form quoted a
+        // monthly total, and provisioning a company on a different one is worse than refusing.
+        Set<AddonType> addons = accountType == CompanyType.WAREHOUSE
+                ? Set.of()
+                : parseAddons(request.addons());
+
         String email = request.email().trim().toLowerCase(java.util.Locale.ROOT);
         if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new BadRequestException("error.register.emailTaken");
@@ -117,10 +130,13 @@ public class RegistrationService {
 
         // Start the subscription on the chosen plan for the new tenant. Bind the company so the
         // @TenantId-scoped subscription row is stamped with it; startSubscription runs in its own session
-        // (cross-bean call) which reads the tenant we just set.
+        // (cross-bean call) which reads the tenant we just set. The add-ons are stamped the same way.
         TenantContext.setCompanyId(company.getId());
         try {
             planService.startSubscription(plan);
+            for (AddonType addon : addons) {
+                planService.activateAddon(addon);
+            }
         } finally {
             TenantContext.clear();
         }
@@ -132,6 +148,31 @@ public class RegistrationService {
         }
 
         return authService.issueSession(owner.getId());
+    }
+
+    /**
+     * The add-ons named in the request, as enum values.
+     *
+     * <p>An unrecognised name is an error rather than something to skip: the signup form showed the visitor
+     * a monthly total, and silently dropping one of the extras would provision a company that does not
+     * match what they agreed to.</p>
+     */
+    private static Set<AddonType> parseAddons(List<String> requested) {
+        Set<AddonType> addons = new LinkedHashSet<>();
+        if (requested == null) {
+            return addons;
+        }
+        for (String name : requested) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            try {
+                addons.add(AddonType.valueOf(name.trim().toUpperCase(java.util.Locale.ROOT)));
+            } catch (IllegalArgumentException e) {
+                throw new BadRequestException("error.plan.invalidAddon");
+            }
+        }
+        return addons;
     }
 
     /**

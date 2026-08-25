@@ -3,9 +3,13 @@ package com.example.skladdo.model;
 import java.math.BigDecimal;
 
 /**
- * The subscription tiers a company can be on. Each tier bundles the hard caps on core resources
- * ({@link #maxUsers}, {@link #maxManufacturers}, {@link #maxProducts}) and its monthly price. The
- * add-on features (emailing manufacturers, tenders) are sold separately - see {@link AddonType}.
+ * The subscription tiers a company can be on. A tier is its monthly price and one cap:
+ * {@link #maxUsers}. The add-on features (emailing manufacturers, tenders) are sold separately - see
+ * {@link AddonType}.
+ *
+ * <p>Seats are deliberately the <em>only</em> thing metered. Capping catalogue size punishes a company
+ * for the work it does in the product rather than for the value it takes out of it, and it lands as a
+ * wall in the middle of an import. What a tier sells is how many people can work in it.</p>
  *
  * <p>There is no perpetual free tier a business can sit on: an ordinary company picks one of the paid
  * plans below at signup and is billed from its second month. The one exception is {@link #WAREHOUSE},
@@ -18,9 +22,9 @@ import java.math.BigDecimal;
 public enum PlanType {
 
     // -1 == UNLIMITED (the named constant can't be forward-referenced from the constants above it).
-    STARTER(new BigDecimal("29"), 5, 25, 250),
-    BUSINESS(new BigDecimal("79"), 25, -1, -1),
-    ENTERPRISE(new BigDecimal("199"), -1, -1, -1),
+    STARTER(new BigDecimal("29"), 5),
+    BUSINESS(new BigDecimal("79"), 25),
+    ENTERPRISE(new BigDecimal("199"), -1),
 
     /**
      * What every {@link CompanyType#WAREHOUSE} account is on: free, and not for sale. A warehouse account
@@ -33,7 +37,7 @@ public enum PlanType {
      * absent from the plan list the settings page offers and rejected by a plan change. Without that a
      * business could downgrade itself to a free plan.</p>
      */
-    WAREHOUSE(BigDecimal.ZERO, -1, -1, -1),
+    WAREHOUSE(BigDecimal.ZERO, -1),
 
     /**
      * What a {@link CompanyType#PLATFORM} company is on: free, unlimited and not for sale. Skladdo does not
@@ -41,21 +45,17 @@ public enum PlanType {
      * finds its own five-seat cap applied to the people running the service - the same trap
      * {@link #WAREHOUSE} exists to avoid. Like it, {@link #isSelectable()} is false.
      */
-    PLATFORM(BigDecimal.ZERO, -1, -1, -1);
+    PLATFORM(BigDecimal.ZERO, -1);
 
     /** Sentinel used by the {@code max*} caps to mean "no limit". */
     public static final int UNLIMITED = -1;
 
     private final BigDecimal monthlyPrice;
     private final int maxUsers;
-    private final int maxManufacturers;
-    private final int maxProducts;
 
-    PlanType(BigDecimal monthlyPrice, int maxUsers, int maxManufacturers, int maxProducts) {
+    PlanType(BigDecimal monthlyPrice, int maxUsers) {
         this.monthlyPrice = monthlyPrice;
         this.maxUsers = maxUsers;
-        this.maxManufacturers = maxManufacturers;
-        this.maxProducts = maxProducts;
     }
 
     public BigDecimal getMonthlyPrice() {
@@ -64,14 +64,6 @@ public enum PlanType {
 
     public int getMaxUsers() {
         return maxUsers;
-    }
-
-    public int getMaxManufacturers() {
-        return maxManufacturers;
-    }
-
-    public int getMaxProducts() {
-        return maxProducts;
     }
 
     /**

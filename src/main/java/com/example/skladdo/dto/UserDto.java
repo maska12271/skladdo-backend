@@ -1,5 +1,6 @@
 package com.example.skladdo.dto;
 
+import com.example.skladdo.model.AddonType;
 import com.example.skladdo.model.Company;
 import com.example.skladdo.model.CompanyType;
 import com.example.skladdo.model.PermissionModule;
@@ -9,6 +10,7 @@ import com.example.skladdo.model.Warehouse;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Public representation of a user account. Never exposes the password hash.
@@ -56,8 +58,44 @@ public record UserDto(
          * presentational - every {@code /api/admin} endpoint checks the authority itself, so a tampered
          * profile buys nothing but a link that 403s.
          */
-        Boolean platformAdmin
+        Boolean platformAdmin,
+        /**
+         * Storage key of an uploaded profile picture, presigned by the client at render time. Included in
+         * listings too - unlike {@code permissions} these are plain columns on the row, so there is no
+         * extra query to avoid.
+         */
+        String avatarKey,
+        /** Preset avatar icon name, used when there is no {@code avatarKey}. */
+        String avatarIcon,
+        /** Palette token for {@code avatarIcon}. */
+        String avatarColor,
+        /** When this account last signed in, or null if it never has. Shown on the user's profile page. */
+        java.time.Instant lastLoginAt,
+        /**
+         * The add-ons the company the session is working in currently pays for. The company-level twin of
+         * {@code permissions}: both must pass before a gated feature is offered, so the client hides the
+         * tender and manufacturer-email pages entirely when the entitlement is absent.
+         *
+         * <p>Populated for session profiles only ({@code /me}, login, company switch) and left
+         * {@code null} in bulk listings - resolving it per row would be one query per user.</p>
+         */
+        Set<AddonType> addons
 ) {
+
+    /**
+     * The same profile with the company's add-ons attached.
+     *
+     * <p>Applied by the controller rather than inside the profile builders: those run in a transaction
+     * opened before any tenant is bound - at login the token is only being minted - and Hibernate fixes
+     * the tenant when it opens the session, so the lookup has to happen out here. See
+     * {@code AuthService.addonsOf}.</p>
+     */
+    public UserDto withAddons(Set<AddonType> addons) {
+        return new UserDto(id, email, fullName, role, companyId, companyName, canSeePrices, active,
+                archived, passwordSetupPending, emailSignature, language, permissions, warehouseIds,
+                homeCompanyId, homeCompanyName, partnerSession, homeRole, companyType, platformAdmin,
+                avatarKey, avatarIcon, avatarColor, lastLoginAt, addons);
+    }
     public static UserDto from(User user) {
         return from(user, null, null);
     }
@@ -88,7 +126,12 @@ public record UserDto(
                 false,
                 user.getRole(),
                 company != null ? company.getType() : null,
-                user.isPlatformAdmin()
+                user.isPlatformAdmin(),
+                user.getAvatarKey(),
+                user.getAvatarIcon(),
+                user.getAvatarColor(),
+                user.getLastLoginAt(),
+                null
         );
     }
 
@@ -136,7 +179,12 @@ public record UserDto(
                 // Always the *home* company's nature: it says what kind of business the account belongs
                 // to, which does not change just because they are currently working in a client's data.
                 home != null ? home.getType() : null,
-                user.isPlatformAdmin()
+                user.isPlatformAdmin(),
+                user.getAvatarKey(),
+                user.getAvatarIcon(),
+                user.getAvatarColor(),
+                user.getLastLoginAt(),
+                null
         );
     }
 }

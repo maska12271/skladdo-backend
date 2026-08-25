@@ -5,6 +5,7 @@ import com.example.skladdo.dto.CompanyOptionDto;
 import com.example.skladdo.dto.LoginRequest;
 import com.example.skladdo.dto.LoginResponse;
 import com.example.skladdo.dto.SwitchCompanyRequest;
+import com.example.skladdo.dto.UpdateAvatarRequest;
 import com.example.skladdo.dto.UpdateProfileRequest;
 import com.example.skladdo.dto.UpdateSignatureRequest;
 import com.example.skladdo.dto.UserDto;
@@ -32,6 +33,20 @@ public class AuthController {
     }
 
     /**
+     * Attaches the company's add-ons to a session profile. Done here, outside any transaction, because the
+     * lookup has to bind its own tenant - see {@link AuthService#addonsOf}. Every endpoint that hands back
+     * "who am I" goes through one of these two, so a client never has to ask separately what the company
+     * is entitled to.
+     */
+    private UserDto withAddons(UserDto user) {
+        return user.withAddons(authService.addonsOf(user.companyId()));
+    }
+
+    private LoginResponse withAddons(LoginResponse response) {
+        return response.withAddons(authService.addonsOf(response.user().companyId()));
+    }
+
+    /**
      * Rate limited per account and per source address — this endpoint distinguishes "no such account"
      * from "wrong password", so without a limit it would hand an attacker both a user-enumeration oracle
      * and unlimited guesses. The check runs before any password hashing so a locked-out caller is cheap
@@ -48,7 +63,7 @@ public class AuthController {
             // admin panel's activity figures - a failure to record it must never cost the user their login,
             // hence the separate, non-throwing call.
             authService.recordLogin(response.user().id());
-            return response;
+            return withAddons(response);
         } catch (LocalizedException e) {
             // Every rejection path (unknown email, wrong password, setup still pending) counts: each one
             // confirms something about the address, so none of them may be probed freely.
@@ -59,7 +74,7 @@ public class AuthController {
 
     @GetMapping("/me")
     public UserDto me() {
-        return authService.currentUser();
+        return withAddons(authService.currentUser());
     }
 
     /**
@@ -78,19 +93,26 @@ public class AuthController {
      */
     @PostMapping("/switch-company")
     public LoginResponse switchCompany(@Valid @RequestBody SwitchCompanyRequest request) {
-        return authService.switchCompany(request.companyId());
+        return withAddons(authService.switchCompany(request.companyId()));
     }
 
     /** Any signed-in user updates their own email signature (used on outgoing manufacturer emails). */
     @PutMapping("/me/signature")
     public UserDto updateSignature(@Valid @RequestBody UpdateSignatureRequest request) {
-        return authService.updateSignature(request.signature());
+        return withAddons(authService.updateSignature(request.signature()));
+    }
+
+    /** Any signed-in user sets their own avatar: an uploaded picture, a preset icon, or neither. */
+    @PutMapping("/me/avatar")
+    public UserDto updateAvatar(@Valid @RequestBody UpdateAvatarRequest request) {
+        return withAddons(authService.updateAvatar(
+                request.avatarKey(), request.avatarIcon(), request.avatarColor()));
     }
 
     /** Any signed-in user updates their own display name and/or interface language. */
     @PutMapping("/me/profile")
     public UserDto updateProfile(@Valid @RequestBody UpdateProfileRequest request) {
-        return authService.updateProfile(request.fullName(), request.language());
+        return withAddons(authService.updateProfile(request.fullName(), request.language()));
     }
 
     /** Any signed-in user changes their own password after confirming their current one. */

@@ -71,19 +71,33 @@ public abstract class ApiTestBase {
     // fixtures
     // -------------------------------------------------------------------------------------------------
 
-    /** A registered BUSINESS company on the STARTER plan, with its OWNER signed in. */
+    /**
+     * A registered BUSINESS company on the STARTER plan with both add-ons bought, and its OWNER signed in.
+     *
+     * <p>The add-ons are included so that tests about <em>permissions</em> stay about permissions. Tenders
+     * and manufacturer emails are sold separately and their endpoints are closed to a company that has not
+     * bought them, so a fixture without them would make every "an owner reaches everything" assertion fail
+     * for a reason that has nothing to do with the matrix under test. Use
+     * {@link #newBusinessWithoutAddons()} when the entitlement itself is the subject.</p>
+     */
     protected Tenant newBusiness() throws Exception {
-        return register("BUSINESS", "STARTER");
+        return register("BUSINESS", "STARTER", true);
+    }
+
+    /** The same, but sold no add-ons - so the tender and manufacturer-email endpoints are closed to it. */
+    protected Tenant newBusinessWithoutAddons() throws Exception {
+        return register("BUSINESS", "STARTER", false);
     }
 
     /** A registered WAREHOUSE (3PL) account, with its OWNER signed in. */
     protected Tenant newWarehouseAccount() throws Exception {
-        return register(null, null);
+        return register(null, null, false);
     }
 
-    private Tenant register(String accountType, String plan) throws Exception {
+    private Tenant register(String accountType, String plan, boolean withAddons) throws Exception {
         int n = SEQ.incrementAndGet();
         String email = "it-owner-" + n + "@test.local";
+        String addons = withAddons ? ",\"addons\":[\"TENDERS\",\"MANUFACTURER_EMAILS\"]" : "";
         String body = accountType == null
                 ? """
                   {"companyName":"IT Warehouse %d","fullName":"IT Owner %d","email":"%s",
@@ -91,8 +105,8 @@ public abstract class ApiTestBase {
                   """.formatted(n, n, email)
                 : """
                   {"companyName":"IT Company %d","fullName":"IT Owner %d","email":"%s",
-                   "password":"testpass123","accountType":"%s","plan":"%s"}
-                  """.formatted(n, n, email, accountType, plan);
+                   "password":"testpass123","accountType":"%s","plan":"%s"%s}
+                  """.formatted(n, n, email, accountType, plan, addons);
 
         JsonNode response = readJson(mvc.perform(post("/api/public/register")
                 .contentType(MediaType.APPLICATION_JSON)

@@ -18,6 +18,7 @@ import com.example.skladdo.repository.WarehouseConnectionRepository;
 import com.example.skladdo.security.CustomUserDetails;
 import com.example.skladdo.security.JwtService;
 import com.example.skladdo.security.SecurityUtil;
+import com.example.skladdo.security.TenantContext;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -45,6 +46,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final CompanyRepository companyRepository;
     private final WarehouseConnectionRepository connectionRepository;
+    private final PlanService planService;
 
     public AuthService(AuthenticationManager authenticationManager,
                        JwtService jwtService,
@@ -52,7 +54,8 @@ public class AuthService {
                        PermissionService permissionService,
                        PasswordEncoder passwordEncoder,
                        CompanyRepository companyRepository,
-                       WarehouseConnectionRepository connectionRepository) {
+                       WarehouseConnectionRepository connectionRepository,
+                       PlanService planService) {
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.userRepository = userRepository;
@@ -60,13 +63,34 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
         this.companyRepository = companyRepository;
         this.connectionRepository = connectionRepository;
+        this.planService = planService;
+    }
+
+    /**
+     * The add-ons {@code companyId} currently pays for - the company-level entitlements that decide whether
+     * the tender and manufacturer-email features are offered at all.
+     *
+     * <p>Called by {@code AuthController} on the way out rather than from inside the profile builders, and
+     * that placement is load-bearing twice over. The builders run in a transaction opened <em>before</em>
+     * any tenant is bound (at login the token is only being minted now), and Hibernate fixes the tenant id
+     * when it opens the session - so the binding has to be established out here, before the call, exactly
+     * as the nightly sweep does it.</p>
+     */
+    public Set<com.example.skladdo.model.AddonType> addonsOf(Long companyId) {
+        if (companyId == null) {
+            return Set.of();
+        }
+        return TenantContext.callAs(companyId, planService::activeAddons);
     }
 
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
         // Tell the user precisely which field to fix — unknown email vs. wrong password. This
         // deliberately trades away login user-enumeration resistance for clearer feedback.
+        // A retired account reads as no account at all. Its row survives only so old records can still
+        // name the person; there is nothing here to sign in to.
         User account = userRepository.findByEmailIgnoreCase(request.email().trim())
+                .filter(user -> !user.isDeleted())
                 .orElseThrow(() -> new BadRequestException("error.auth.noAccount"));
 
         // A freshly-invited account has no usable password yet: surface the actionable "set your
@@ -274,6 +298,19 @@ public class AuthService {
     private User requireCurrentUser() {
         return userRepository.findById(SecurityUtil.currentUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    }
+
+    /**
+     * Updates the signed-in user's own avatar - an uploaded picture or a preset icon - and returns the
+     * refreshed profile. Reuses {@code UserService.applyAvatar} so "a photo replaces an icon, and clearing
+     * one clears the other" is decided in exactly one place, whoever is doing the setting.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public UserDto updateAvatar(String avatarKey, String avatarIcon, String avatarColor) {
+        User user = requireCurrentUser();
+        UserService.applyAvatar(user, avatarKey, avatarIcon, avatarColor);
+        userRepository.save(user);
+        return profile(user);
     }
 
     /** Updates the signed-in user's own email signature and returns the refreshed profile. */

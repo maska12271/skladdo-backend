@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 /**
  * Public self-service signup payload: the new company's name, the owner's name / login email / chosen
  * password, and the paid {@code plan} the company is starting on. The owner sets their password here
@@ -37,6 +39,15 @@ public record RegisterRequest(
          * stored link server-side, never from this request, or a visitor could grant themselves whatever
          * they liked by editing the query string. An unusable code is refused rather than ignored.
          */
-        String inviteCode
+        String inviteCode,
+        /**
+         * The paid extras switched on at signup ({@code TENDERS}, {@code MANUFACTURER_EMAILS}), or absent
+         * for none. Each adds its own monthly price on top of the plan, which is why the form asks rather
+         * than assuming: without the add-on the feature is not merely locked, its pages are not there.
+         *
+         * <p>Ignored for a {@code WAREHOUSE} signup, which is sold nothing. Unknown names are refused
+         * rather than skipped - quietly dropping one would charge a different total than the form showed.</p>
+         */
+        List<String> addons
 ) {
 }

@@ -8,8 +8,6 @@ import com.example.skladdo.model.SubscriptionStatus;
 import com.example.skladdo.repository.CompanyAddonRepository;
 import com.example.skladdo.repository.CompanyRepository;
 import com.example.skladdo.repository.CompanySubscriptionRepository;
-import com.example.skladdo.repository.ManufacturerRepository;
-import com.example.skladdo.repository.ProductRepository;
 import com.example.skladdo.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 
@@ -46,8 +44,6 @@ class PlanServiceRolloverTest {
             subscriptions,
             addons,
             mock(UserRepository.class),
-            mock(ManufacturerRepository.class),
-            mock(ProductRepository.class),
             mock(CompanyRepository.class));
 
     private static Instant daysFromNow(int days) {

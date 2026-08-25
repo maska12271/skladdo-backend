@@ -2,6 +2,7 @@ package com.example.skladdo.controller;
 
 import com.example.skladdo.dto.LoginResponse;
 import com.example.skladdo.dto.RegisterRequest;
+import com.example.skladdo.service.AuthService;
 import com.example.skladdo.service.RegistrationService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -21,13 +22,18 @@ import org.springframework.web.bind.annotation.RestController;
 public class PublicRegistrationController {
 
     private final RegistrationService registrationService;
+    private final AuthService authService;
 
-    public PublicRegistrationController(RegistrationService registrationService) {
+    public PublicRegistrationController(RegistrationService registrationService, AuthService authService) {
         this.registrationService = registrationService;
+        this.authService = authService;
     }
 
     @PostMapping
     public LoginResponse register(@Valid @RequestBody RegisterRequest request) {
-        return registrationService.register(request);
+        LoginResponse response = registrationService.register(request);
+        // A signup can switch add-ons on, so the profile it returns has to carry them - otherwise the new
+        // owner lands on a dashboard missing the very features they just paid for, until the next reload.
+        return response.withAddons(authService.addonsOf(response.user().companyId()));
     }
 }

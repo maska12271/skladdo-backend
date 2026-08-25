@@ -36,7 +36,6 @@ public class ProductService {
     private final CompanySettingsService companySettingsService;
     private final WarehouseStockRepository warehouseStockRepository;
     private final ProductBatchRepository productBatchRepository;
-    private final PlanService planService;
     private final AuditService auditService;
     private final StorageService storageService;
     private final StoredFileRepository storedFiles;
@@ -48,7 +47,6 @@ public class ProductService {
                           CompanySettingsService companySettingsService,
                           WarehouseStockRepository warehouseStockRepository,
                           ProductBatchRepository productBatchRepository,
-                          PlanService planService,
                           AuditService auditService,
                           StorageService storageService,
                           StoredFileRepository storedFiles) {
@@ -59,7 +57,6 @@ public class ProductService {
         this.companySettingsService = companySettingsService;
         this.warehouseStockRepository = warehouseStockRepository;
         this.productBatchRepository = productBatchRepository;
-        this.planService = planService;
         this.auditService = auditService;
         this.storageService = storageService;
         this.storedFiles = storedFiles;
@@ -124,10 +121,9 @@ public class ProductService {
 
     @Transactional
     public Product save(Product product) {
-        // A brand-new product (no id yet) picks up the company's new-product defaults and counts against
-        // the plan's cap; existing products being re-saved (e.g. order stock adjustments) are untouched.
+        // A brand-new product (no id yet) picks up the company's new-product defaults; existing products
+        // being re-saved (e.g. order stock adjustments) are untouched.
         if (product.getId() == null) {
-            planService.assertCanCreateProduct();
             applyNewProductDefaults(product);
         }
         // A blank SKU must be stored as NULL, not "" — the column is unique and many products have no
@@ -146,7 +142,6 @@ public class ProductService {
 
     @Transactional
     public Product create(Product product) {
-        planService.assertCanCreateProduct();
         Category category = categoryService.findById(product.getCategory().getId());
         Manufacturer manufacturer = manufacturerService.findById(product.getManufacturer().getId());
 

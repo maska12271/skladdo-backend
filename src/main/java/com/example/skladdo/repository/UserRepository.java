@@ -31,7 +31,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
      *
      * <p>An archived account cannot sign in or do anything until it is unarchived, so it does not consume a
      * seat - archiving is how you retire someone without destroying the record, and it would be perverse if
-     * the safe option were the one that cost you a seat while deleting was the only way to free one.</p>
+     * the safe option were the one that cost you a seat while deleting was the only way to free one. A
+     * deleted account is gone for good and frees its seat too; its row survives only so the history that
+     * names it keeps resolving.</p>
      *
      * <p>The null check is load-bearing: {@code archived} is a nullable {@link Boolean}, so rows written
      * before the column existed hold {@code null} rather than {@code false}, and {@code archived = false}
@@ -39,11 +41,20 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     @org.springframework.data.jpa.repository.Query("""
             select count(u) from User u
-            where u.company.id = :companyId and (u.archived is null or u.archived = false)
+            where u.company.id = :companyId
+              and (u.archived is null or u.archived = false)
+              and u.deletedAt is null
             """)
     long countSeatsInUse(@org.springframework.data.repository.query.Param("companyId") Long companyId);
 
-    List<User> findByCompanyIdOrderByIdDesc(Long companyId);
+    /**
+     * Every live account in the company, newest first. Deleted accounts are excluded here rather than left
+     * to each caller to filter: they are gone as far as the company is concerned, and the only reason their
+     * rows still exist is so the history that names them keeps resolving (see {@code User.deletedAt}).
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "select u from User u where u.company.id = :companyId and u.deletedAt is null order by u.id desc")
+    List<User> findByCompanyIdOrderByIdDesc(@org.springframework.data.repository.query.Param("companyId") Long companyId);
 
     /** Used to fetch a user while ensuring they belong to the caller's company (tenant isolation). */
     Optional<User> findByIdAndCompanyId(Long id, Long companyId);
