@@ -37,9 +37,11 @@ import java.util.stream.Collectors;
  * have it removed. Granting alone would make the property an append-only list where deleting a line looked
  * like it revoked access but did not, which is the sort of gap nobody notices until it matters.</p>
  *
- * <p>An email in the property with no matching account is reported and skipped: the account may simply not
- * exist yet (a fresh database), and inventing one here would create a login nobody asked for. The operator
- * signs up (or is seeded) and the next restart picks them up.</p>
+ * <p>An email in the property with no matching account is provisioned fresh - see {@link #provisionOperator} -
+ * into a dedicated {@link CompanyType#PLATFORM} shell company with no catalogue, orders or billing of its
+ * own. That is deliberately the cheapest way to an admin-only login: naming an address nobody has signed
+ * up with yet is enough, and {@link #warnIfDualRole} is what catches the other case, where the address
+ * already belongs to a real tenant.</p>
  *
  * <p>Runs on {@link ApplicationReadyEvent} rather than as a {@code CommandLineRunner}. Ordering matters
  * here - the accounts have to exist before they can be matched - and {@code DataInitializer} declares no
@@ -114,6 +116,7 @@ public class PlatformAdminBootstrap {
                 log.info("Granted platform administration to {}.", user.getEmail());
             }
             remindIfPasswordNotSet(user);
+            warnIfDualRole(user);
         }
 
         if (wanted.isEmpty()) {
@@ -145,6 +148,29 @@ public class PlatformAdminBootstrap {
         } catch (Exception e) {
             log.warn("Could not re-issue the password-setup link for {}: {}", user.getEmail(), e.getMessage());
         }
+    }
+
+    /**
+     * Flags an operator whose login is also a real tenant's account.
+     *
+     * <p>Nothing here refuses it - a solo operator bootstrapping their own product plausibly wants their
+     * everyday login to double as the admin one, and that is exactly how local dev is set up (see the
+     * comment on {@code app.platform-admin-emails} in application.properties). But a production deploy
+     * generally wants the opposite: an admin-only login with no tenant of its own, so the panel is all it
+     * ever sees. An account that also owns a company sees that company's pages ALONGSIDE the admin ones,
+     * not only the admin ones - easy to set up once for convenience and then forget is not what got
+     * deployed. Logged on every boot for as long as it stays true, rather than only the first time, since
+     * nobody re-reads a startup log from three weeks ago.</p>
+     */
+    private void warnIfDualRole(User user) {
+        Company company = user.getCompany();
+        if (company == null || company.isPlatformCompany()) {
+            return;
+        }
+        log.warn("{} is a platform administrator whose login also belongs to '{}' - it will see that "
+                + "company's pages alongside the admin panel, not only the admin panel. For an admin-only "
+                + "login, list an address with no company of its own (see deploy/.env.example).",
+                user.getEmail(), company.getName());
     }
 
     /**
