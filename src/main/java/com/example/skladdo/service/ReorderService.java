@@ -17,8 +17,12 @@ import java.util.Map;
  * Works out what needs reordering: the products at or below their minimum stock, with a suggested order
  * quantity and the price last paid, ready to be turned into a purchase order.
  *
- * <p>Uses the same "low stock" rule as the dashboard and the low-stock notification
- * ({@code stockQuantity < minimumStock}) so the three never disagree about what is running out.</p>
+ * <p>Uses the same rule as the low-stock notification ({@code stockQuantity < minimumStock}), so the two
+ * never disagree about what to reorder. The dashboard's low-stock figure is deliberately <em>wider</em> -
+ * it also counts products that are simply empty, minimum or no minimum (see
+ * {@code DashboardService.needsRestocking}). Reordering needs a minimum to have a target quantity, so a
+ * product without one is not something this can suggest ordering; a card that says "needs attention" has
+ * no such constraint.</p>
  */
 @Service
 public class ReorderService {

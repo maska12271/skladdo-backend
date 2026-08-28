@@ -77,6 +77,11 @@ class InvoicePdfServiceRenderTest {
             }
 
             @Override
+            public String store(byte[] bytes, String contentType, String extension, String category) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
             public String presign(String key, Duration ttl) {
                 return dir.resolve(key).toUri().toString();
             }

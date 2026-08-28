@@ -268,13 +268,18 @@ public class PermissionService {
      * <p>Read-only on {@link PermissionModule#CLIENTS} and {@link PermissionModule#MANUFACTURERS}:
      * fulfilling an order means knowing the customer and the maker, but neither is a warehouse's to
      * change. Everything not named here is closed, including tenders and emails.</p>
+     *
+     * <p>{@link PermissionModule#SERVICES} is deliberately absent. A service has no stock, so the
+     * catalogue page is nothing a picker or packer can act on. The service <em>lines</em> inside an order
+     * are unaffected: {@link #canReadReference} already derives service access from
+     * {@link PermissionModule#SALES_ORDERS}, so an order still reads in full - it is only the standalone
+     * page (and its sidebar entry) that goes.</p>
      */
     public static List<ModulePermissionDto> warehouseDefaults() {
         return List.of(
                 new ModulePermissionDto(PermissionModule.PURCHASE_ORDERS, true, false, true, false),
                 new ModulePermissionDto(PermissionModule.SALES_ORDERS, true, false, true, false),
                 new ModulePermissionDto(PermissionModule.PRODUCTS, true, false, false, false),
-                new ModulePermissionDto(PermissionModule.SERVICES, true, false, false, false),
                 new ModulePermissionDto(PermissionModule.CLIENTS, true, false, false, false),
                 new ModulePermissionDto(PermissionModule.MANUFACTURERS, true, false, false, false),
                 new ModulePermissionDto(PermissionModule.INVENTORY, true, true, false, false),

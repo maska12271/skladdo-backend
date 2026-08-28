@@ -138,11 +138,12 @@ public record DashboardStatsDto(
     ) {
     }
 
+    /** {@code active} is the few still-running tenders the widget lists, not the newest overall. */
     public record TendersBlock(
             int activeCount,
             int totalCount,
             BigDecimal totalValue,
-            List<TenderRow> latest
+            List<TenderRow> active
     ) {
     }
 

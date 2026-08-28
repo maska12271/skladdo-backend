@@ -15,5 +15,7 @@ public enum NotificationType {
     /** A product's stock fell below its configured minimum. */
     LOW_STOCK,
     /** A manufacturer replied to an email this user sent. */
-    EMAIL_REPLY
+    EMAIL_REPLY,
+    /** Someone accepted an invitation and created their account. Goes to owners and administrators. */
+    USER_JOINED
 }

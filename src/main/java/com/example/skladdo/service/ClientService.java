@@ -3,8 +3,12 @@ package com.example.skladdo.service;
 import com.example.skladdo.model.AuditAction;
 import com.example.skladdo.exception.ResourceNotFoundException;
 import com.example.skladdo.model.Client;
+import com.example.skladdo.model.PartnerContact;
 import com.example.skladdo.repository.ClientRepository;
+import com.example.skladdo.repository.PartnerContactRepository;
 import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -18,15 +22,22 @@ public class ClientService {
 
     private final ClientRepository clientRepository;
 
+    private final PartnerContactRepository contactRepository;
+
     private final AuditService auditService;
 
-    public ClientService(ClientRepository clientRepository, AuditService auditService) {
+    // The contact repository rather than PartnerContactService: that service already depends on this one
+    // (it scopes every call through the client), and taking it back would be a constructor cycle.
+    public ClientService(ClientRepository clientRepository,
+                         PartnerContactRepository contactRepository,
+                         AuditService auditService) {
         this.clientRepository = clientRepository;
+        this.contactRepository = contactRepository;
         this.auditService = auditService;
     }
 
     /**
-     * Paged client search. Free-text matches name / registration code / email / contact person; the
+     * Paged client search. Free-text matches name / registration code / email / any contact person's name; the
      * status filter narrows to active vs archived (a {@code null} archived flag counts as active).
      * {@code includeArchived} is the base visibility for reference/dropdown callers — when false,
      * archived clients are hidden regardless of the status filter.
@@ -37,11 +48,22 @@ public class ClientService {
 
             if (search != null && !search.isBlank()) {
                 String like = "%" + search.toLowerCase() + "%";
+                // Contacts are a separate table with no mapped association back to the client (see
+                // PartnerContact), so matching a person's name takes an EXISTS subquery rather than a
+                // join. Kept because searching a client by who you deal with there is how people
+                // actually find them - it worked when the name was a column on CLIENT, and losing it
+                // to the move would be a downgrade nobody asked for.
+                Subquery<Long> byContact = query.subquery(Long.class);
+                Root<PartnerContact> contact = byContact.from(PartnerContact.class);
+                byContact.select(contact.get("id")).where(
+                        cb.equal(contact.get("clientId"), root.get("id")),
+                        cb.like(cb.lower(contact.get("name")), like));
+
                 predicates.add(cb.or(
                         cb.like(cb.lower(root.get("name")), like),
                         cb.like(cb.lower(root.get("registrationCode")), like),
                         cb.like(cb.lower(root.get("email")), like),
-                        cb.like(cb.lower(root.get("contactPerson")), like)
+                        cb.exists(byContact)
                 ));
             }
 
@@ -85,7 +107,6 @@ public class ClientService {
         client.setPhone(updatedClient.getPhone());
         client.setCountry(updatedClient.getCountry());
         client.setAddress(updatedClient.getAddress());
-        client.setContactPerson(updatedClient.getContactPerson());
         client.setNotes(updatedClient.getNotes());
         client.setActive(updatedClient.getActive());
         Client saved = clientRepository.save(client);
@@ -93,9 +114,15 @@ public class ClientService {
         return saved;
     }
 
+    // Transactional so the contacts and the client are removed together: taking the contacts out and
+    // then failing on the client would leave a live record with its people silently gone.
+    @org.springframework.transaction.annotation.Transactional
     public void delete(Long id) {
         Client client = findById(id);
         String name = client.getName();
+        // Contacts hold the client id as a plain column, so nothing at the database level removes them -
+        // left behind they would belong to nobody and be reachable from nowhere.
+        contactRepository.deleteByClientId(id);
         clientRepository.delete(client);
         auditService.record(AuditService.ENTITY_CLIENT, id, AuditAction.DELETE, name);
     }

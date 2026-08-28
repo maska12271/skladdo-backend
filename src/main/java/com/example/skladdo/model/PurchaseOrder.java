@@ -67,6 +67,13 @@ public class PurchaseOrder {
      */
     private Long tenderId;
 
+    /**
+     * Optional {@link PartnerContact} at the manufacturer this order is addressed to - who at the supplier
+     * is handling it. A plain id for the same reasons as {@code tenderId}: the order outlives the contact
+     * (people leave), and a removed contact must not make the order unopenable.
+     */
+    private Long contactId;
+
     private String deliveryAddress;
 
     @Column(nullable = false)

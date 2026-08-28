@@ -17,6 +17,7 @@ import com.example.skladdo.model.PurchaseOrderItem;
 import com.example.skladdo.model.Role;
 import com.example.skladdo.model.Warehouse;
 import com.example.skladdo.repository.OrderStatusChangeRepository;
+import com.example.skladdo.repository.PartnerContactRepository;
 import com.example.skladdo.repository.PurchaseOrderRepository;
 import com.example.skladdo.security.SecurityUtil;
 import jakarta.persistence.criteria.Predicate;
@@ -45,6 +46,7 @@ public class PurchaseOrderService {
     private final ProductBatchService productBatchService;
     private final CompanySettingsService settingsService;
     private final ExchangeRateService exchangeRateService;
+    private final PartnerContactRepository contactRepository;
     private final AuditService auditService;
 
     public PurchaseOrderService(PurchaseOrderRepository purchaseOrderRepository,
@@ -55,6 +57,7 @@ public class PurchaseOrderService {
                                 ProductBatchService productBatchService,
                                 CompanySettingsService settingsService,
                                 ExchangeRateService exchangeRateService,
+                                PartnerContactRepository contactRepository,
                                 AuditService auditService) {
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.manufacturerService = manufacturerService;
@@ -64,6 +67,7 @@ public class PurchaseOrderService {
         this.productBatchService = productBatchService;
         this.settingsService = settingsService;
         this.exchangeRateService = exchangeRateService;
+        this.contactRepository = contactRepository;
         this.auditService = auditService;
     }
 
@@ -186,6 +190,7 @@ public class PurchaseOrderService {
         purchaseOrder.setInvoiceFileName(blankToNull(request.getInvoiceFileName()));
         exchangeRateService.recordUsedRate(purchaseOrder.getCurrency(), purchaseOrder.getExchangeRate());
         purchaseOrder.setTenderId(request.getTenderId());
+        purchaseOrder.setContactId(resolveContactId(request.getContactId(), request.getManufacturerId()));
 
         if (isStockAffecting(purchaseOrder.getStatus())) {
             increaseStockForItems(purchaseOrder.getItems(), warehouse);
@@ -227,6 +232,7 @@ public class PurchaseOrderService {
         purchaseOrder.setInvoiceFileName(blankToNull(request.getInvoiceFileName()));
         exchangeRateService.recordUsedRate(purchaseOrder.getCurrency(), purchaseOrder.getExchangeRate());
         purchaseOrder.setTenderId(request.getTenderId());
+        purchaseOrder.setContactId(resolveContactId(request.getContactId(), request.getManufacturerId()));
 
         OrderStatus newStatus = purchaseOrder.getStatus();
 
@@ -357,6 +363,23 @@ public class PurchaseOrderService {
         order.setInvoiceFileKey(blankToNull(key));
         order.setInvoiceFileName(blankToNull(name));
         return purchaseOrderRepository.save(order);
+    }
+
+    /**
+     * Keeps the chosen contact person and the chosen supplier in step.
+     *
+     * <p>A contact belongs to exactly one manufacturer, so one from anywhere else is not a narrower
+     * choice, it is a wrong one - and switching an order to a different supplier has to drop whoever was
+     * named at the old one rather than quietly leave them attached. Silently cleared instead of rejected:
+     * the caller is changing supplier, not making a claim about the contact.</p>
+     */
+    private Long resolveContactId(Long contactId, Long manufacturerId) {
+        if (contactId == null || manufacturerId == null) {
+            return null;
+        }
+        return contactRepository.findByIdAndManufacturerId(contactId, manufacturerId)
+                .map(contact -> contact.getId())
+                .orElse(null);
     }
 
     private static String blankToNull(String value) {

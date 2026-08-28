@@ -278,8 +278,19 @@ public class PlanService {
     // --- Enforcement (called at the top of the relevant create flows) ----------------------------
 
     public void assertCanCreateUser() {
+        assertCanCreateUser(SecurityUtil.currentCompanyId());
+    }
+
+    /**
+     * The same seat check for a company named explicitly rather than taken from the caller.
+     *
+     * <p>Needed by invitation redemption, which runs unauthenticated: the person following the link has no
+     * security context to read a company from, only the invite row that says which one they are joining.
+     * The tenant must already be bound for the subscription lookup - see {@code TenantContext.callAs}.</p>
+     */
+    public void assertCanCreateUser(Long companyId) {
         checkLimit(getOrCreateSubscription().getPlan().getMaxUsers(),
-                userRepository.countSeatsInUse(SecurityUtil.currentCompanyId()),
+                userRepository.countSeatsInUse(companyId),
                 "error.plan.userLimit");
     }
 

@@ -61,6 +61,19 @@ public class S3StorageService implements StorageService {
     }
 
     @Override
+    public String store(byte[] bytes, String contentType, String extension, String category) {
+        String key = category + "/" + UUID.randomUUID() + (extension == null ? "" : extension);
+        s3Client.putObject(
+                PutObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .contentType(contentType)
+                        .build(),
+                RequestBody.fromBytes(bytes));
+        return key;
+    }
+
+    @Override
     public String presign(String key, Duration ttl) {
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
                 .signatureDuration(ttl)

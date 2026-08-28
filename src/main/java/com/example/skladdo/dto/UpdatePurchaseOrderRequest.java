@@ -39,6 +39,9 @@ public class UpdatePurchaseOrderRequest {
     // Optional tender this order belongs to (null = not linked to a tender).
     private Long tenderId;
 
+    // Optional contact person at the manufacturer this order is addressed to (null = the company itself).
+    private Long contactId;
+
     @NotNull
     @DecimalMin("0.0")
     private BigDecimal deliveryPrice;
@@ -141,6 +144,14 @@ public class UpdatePurchaseOrderRequest {
 
     public void setTenderId(Long tenderId) {
         this.tenderId = tenderId;
+    }
+
+    public Long getContactId() {
+        return contactId;
+    }
+
+    public void setContactId(Long contactId) {
+        this.contactId = contactId;
     }
 
     public BigDecimal getDeliveryPrice() {

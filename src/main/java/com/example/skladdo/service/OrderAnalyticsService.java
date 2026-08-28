@@ -1,11 +1,13 @@
 package com.example.skladdo.service;
 
 import com.example.skladdo.dto.OrderDetailsDto;
+import com.example.skladdo.dto.PartnerContactDto;
 import com.example.skladdo.dto.OrderDetailsDto.*;
 import com.example.skladdo.exception.ResourceNotFoundException;
 import com.example.skladdo.model.*;
 import com.example.skladdo.repository.OrderStatusChangeRepository;
 import com.example.skladdo.repository.PurchaseOrderItemRepository;
+import com.example.skladdo.repository.PartnerContactRepository;
 import com.example.skladdo.repository.PurchaseOrderRepository;
 import com.example.skladdo.repository.SalesOrderRepository;
 import com.example.skladdo.repository.UserRepository;
@@ -32,17 +34,20 @@ public class OrderAnalyticsService {
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final PurchaseOrderItemRepository purchaseOrderItemRepository;
     private final OrderStatusChangeRepository statusChangeRepository;
+    private final PartnerContactRepository contactRepository;
     private final UserRepository userRepository;
 
     public OrderAnalyticsService(SalesOrderRepository salesOrderRepository,
                                  PurchaseOrderRepository purchaseOrderRepository,
                                  PurchaseOrderItemRepository purchaseOrderItemRepository,
                                  OrderStatusChangeRepository statusChangeRepository,
+                                 PartnerContactRepository contactRepository,
                                  UserRepository userRepository) {
         this.salesOrderRepository = salesOrderRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.purchaseOrderItemRepository = purchaseOrderItemRepository;
         this.statusChangeRepository = statusChangeRepository;
+        this.contactRepository = contactRepository;
         this.userRepository = userRepository;
     }
 
@@ -94,6 +99,7 @@ public class OrderAnalyticsService {
                 order.getClient() != null ? order.getClient().getId() : null,
                 order.getClient() != null ? order.getClient().getName() : null,
                 "Client",
+                null, // a sales order is addressed to the client, not to a named buyer at a supplier
                 order.getOrderDate(), order.getClosingDate(), null,
                 order.getDeliveryAddress(),
                 order.getWarehouse() != null ? order.getWarehouse().getId() : null,
@@ -140,6 +146,7 @@ public class OrderAnalyticsService {
                 order.getManufacturer() != null ? order.getManufacturer().getId() : null,
                 order.getManufacturer() != null ? order.getManufacturer().getName() : null,
                 "Manufacturer",
+                contactNameOf(order.getContactId()),
                 order.getOrderDate(), order.getClosingDate(), order.getExpectedDeliveryDate(),
                 order.getDeliveryAddress(),
                 order.getWarehouse() != null ? order.getWarehouse().getId() : null,
@@ -156,6 +163,16 @@ public class OrderAnalyticsService {
     }
 
     // ---------------------------------------------------------------------------------------------
+
+    /** "Name (Position)" for a purchase order's contact, or null when there is none (or none any more). */
+    private String contactNameOf(Long contactId) {
+        if (contactId == null) {
+            return null;
+        }
+        return contactRepository.findById(contactId)
+                .map(PartnerContactDto::label)
+                .orElse(null);
+    }
 
     private Totals salesTotals(SalesOrder order, List<Line> lines) {
         long units = 0;

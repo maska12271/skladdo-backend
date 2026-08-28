@@ -5,6 +5,8 @@ import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
@@ -16,8 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
- * Sends Skladdo's own system mail — the password setup and reset links — from the platform's
- * {@code noreply@} address ({@code app.mail.platform.*}).
+ * Sends Skladdo's own system mail — the password setup and reset links, and invitations to join a
+ * company — from the platform's {@code noreply@} address ({@code app.mail.platform.*}).
  *
  * <p>Deliberately its own bean rather than a private method on {@link PasswordResetService}, for two
  * reasons. It is a different concern (talking SMTP, versus the lifecycle of a token), and {@code @Async}
@@ -72,6 +74,79 @@ public class PlatformMailer {
     }
 
     /**
+     * Warns at startup when the settings cannot work together, rather than letting every send fail.
+     *
+     * <p>The dev default is the Mailpit sink from docker-compose: {@code localhost:1025}, no auth, no
+     * TLS. Pointing that at a real provider means changing the host - and the natural thing to override
+     * is exactly the host, leaving a real server being dialled on Mailpit's port with encryption off. It
+     * fails per-send, asynchronously, with nothing on screen: the UI has already said the message was
+     * handed over, because from its side it was. That is a bad way to find out, and it is the shape of
+     * mistake this catches.</p>
+     *
+     * <p>Only ever warns. A surprising combination is not necessarily a wrong one - somebody may really be
+     * running a plaintext relay on a non-standard port - so refusing to start would be overreach.</p>
+     */
+    @jakarta.annotation.PostConstruct
+    void warnIfMisconfigured() {
+        if (!isConfigured()) {
+            log.info("Platform mail is off (no app.mail.platform.smtp-host). Invitation and password "
+                    + "links will be offered as copyable URLs instead of being emailed.");
+            return;
+        }
+        boolean local = smtpHost.equalsIgnoreCase("localhost") || smtpHost.equals("127.0.0.1");
+        if (!local && smtpPort == 1025) {
+            log.warn("Platform mail points at '{}' on port 1025 - that is the local Mailpit sink's port, "
+                    + "not a real SMTP one. Set app.mail.platform.smtp-port (587 for STARTTLS).", smtpHost);
+        }
+        if (!local && !smtpUseTls) {
+            log.warn("Platform mail points at '{}' with TLS disabled. Real providers refuse plaintext "
+                    + "logins; set app.mail.platform.smtp-use-tls=true.", smtpHost);
+        }
+        if (!local && smtpUsername.isBlank()) {
+            log.warn("Platform mail points at '{}' with no username, so it will connect without "
+                    + "authenticating. Set app.mail.platform.smtp-username if the server expects a login.",
+                    smtpHost);
+        }
+        log.info("Platform mail: {}:{} (TLS {}), from {}", smtpHost, smtpPort,
+                smtpUseTls ? "on" : "off", fromAddress);
+    }
+
+    /**
+     * Opens one SMTP connection at startup purely to find out whether the credentials work.
+     *
+     * <p>Sending is asynchronous and failures are per-message warnings, which is right for a network blip
+     * but wrong for a wrong password: that fails identically every time, and the only visible signal is a
+     * log line nobody is watching. The admin UI cannot help either - it reports that a sender is
+     * configured, which is true, and it cannot wait on the send to say more without making every
+     * invitation block on an SMTP round trip.</p>
+     *
+     * <p>So the question gets asked once, up front, where the answer is actionable. Never throws: an
+     * unreachable mail server is a reason to warn, not a reason to refuse to run.</p>
+     *
+     * <p>Driven by {@link ApplicationReadyEvent} rather than called from {@link #warnIfMisconfigured()},
+     * and that is not a style choice. {@code @Async} works through the Spring proxy, so a bean calling
+     * this on itself gets it <em>synchronously</em> - the SMTP round trip then lands on the boot thread
+     * and startup waits for it (measured: ~8s against a reachable host, and a full 10s connect timeout
+     * against an unreachable one, on every deploy). An event listener is invoked by the framework, so the
+     * proxy applies and the probe genuinely runs on the mail pool, after the app is already serving.</p>
+     */
+    @Async("mailExecutor")
+    @EventListener(ApplicationReadyEvent.class)
+    void verifyLogin() {
+        try {
+            mailSenderFactory.create(smtpHost, smtpPort, smtpUsername, smtpPassword, smtpUseTls)
+                    .testConnection();
+            log.info("Platform mail: credentials accepted by {}.", smtpHost);
+        } catch (Exception e) {
+            log.warn("Platform mail: {} REJECTED the login ({}). Invitations and password links will not "
+                    + "be delivered - the app will still offer copyable links. Check "
+                    + "app.mail.platform.smtp-username (for Fastmail this is the account username, not "
+                    + "the address you sign in to the website with) and the app password.",
+                    smtpHost, e.getMessage());
+        }
+    }
+
+    /**
      * Emails a setup/reset link, off the caller's thread.
      *
      * <p>An SMTP conversation with an external host takes seconds; nobody should watch a spinner for it,
@@ -115,6 +190,49 @@ public class PlatformMailer {
         } catch (Exception e) {
             log.warn("Platform email to {} failed: {}", recipient, e.getMessage());
         }
+    }
+
+    /**
+     * Emails an invitation link to someone who has no account yet, off the caller's thread like the rest.
+     *
+     * <p>Addressed by company rather than by name: nobody here knows the recipient's name - that is the
+     * point of the link - so the mail leads with who invited them, which is the fact that makes an
+     * unexpected email from an unknown product legible.</p>
+     *
+     * <p>{@code locale} is the inviting administrator's, since the invitee has no stored preference yet.</p>
+     */
+    @Async("mailExecutor")
+    public void sendCompanyInvite(String recipient, String company, String link, int validHours, Locale locale) {
+        if (!isConfigured()) {
+            return;
+        }
+        try {
+            JavaMailSenderImpl sender = mailSenderFactory.create(smtpHost, smtpPort, smtpUsername, smtpPassword, smtpUseTls);
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
+            if (!fromName.isBlank()) {
+                helper.setFrom(fromAddress, fromName);
+            } else {
+                helper.setFrom(fromAddress);
+            }
+            helper.setTo(recipient);
+            helper.setSubject(msg(locale, "email.userInvite.subject", company));
+            helper.setText(inviteBody(company, link, validHours, locale), true);
+            sender.send(message);
+        } catch (Exception e) {
+            log.warn("Invitation email to {} failed: {}", recipient, e.getMessage());
+        }
+    }
+
+    private String inviteBody(String company, String link, int validHours, Locale locale) {
+        return "<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#0f172a;line-height:1.5\">"
+                + "<p>" + msg(locale, "email.userInvite.greeting") + "</p>"
+                + "<p>" + msg(locale, "email.userInvite.body", company) + "</p>"
+                + "<p><a href=\"" + link + "\" style=\"display:inline-block;background:#0f766e;color:#ffffff;"
+                + "padding:10px 20px;border-radius:8px;text-decoration:none\">" + msg(locale, "email.userInvite.cta") + "</a></p>"
+                + "<p style=\"color:#64748b;font-size:13px\">" + msg(locale, "email.userInvite.expiry", validHours) + "</p>"
+                + "<p style=\"color:#64748b;font-size:13px\">" + msg(locale, "email.userInvite.ignore") + "</p>"
+                + "</div>";
     }
 
     private String body(String prefix, String name, String company, String link, Locale locale) {
