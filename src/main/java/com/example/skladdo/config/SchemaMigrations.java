@@ -1,5 +1,6 @@
 package com.example.skladdo.config;
 
+import com.example.skladdo.model.NotificationType;
 import com.example.skladdo.model.PermissionModule;
 import com.example.skladdo.model.PlanType;
 import org.slf4j.Logger;
@@ -90,6 +91,12 @@ public class SchemaMigrations implements CommandLineRunner {
         // behind, so the table does not disagree with the entity.
         dropColumn("SERVICE", "UNIT");
 
+        // A client's single CONTACT_PERSON string became PARTNER_CONTACT rows, so a partner can have as
+        // many named people as it really has, each with a position and an address. The names already on
+        // record are moved across before the column goes.
+        migrateClientContactPersons();
+        dropColumn("CLIENT", "CONTACT_PERSON");
+
         // SENT_EMAIL.template_id is a plain, informational id (see SentEmail#templateId), not a live FK:
         // a sent email is an immutable audit record and templates must stay deletable. An early build
         // modelled it as a @ManyToOne, which would have created a foreign key that blocks deleting any
@@ -106,6 +113,9 @@ public class SchemaMigrations implements CommandLineRunner {
         // Add a line here whenever an enum behind a persisted column gains a value.
         widenEnumCheck("USER_PERMISSION", "MODULE", PermissionModule.class);
         widenEnumCheck("DEFAULT_USER_PERMISSION", "MODULE", PermissionModule.class);
+        // NotificationType gained USER_JOINED with self-service invitations; without this, accepting an
+        // invitation would 409 on the notification written to tell the company about it.
+        widenEnumCheck("NOTIFICATION", "TYPE", NotificationType.class);
 
         // Deleting a user releases its email address so the same person can be invited back. Accounts
         // retired by the build before that rule are still sitting on theirs, which is exactly the state
@@ -165,6 +175,39 @@ public class SchemaMigrations implements CommandLineRunner {
             }
         } catch (Exception e) {
             log.warn("Could not retire legacy FREE subscriptions: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Turns every non-blank {@code CLIENT.CONTACT_PERSON} into a {@link com.example.skladdo.model.PartnerContact}
+     * row, so no name recorded under the old single-string field is lost when the column is dropped.
+     *
+     * <p>The name is all there is to carry: the old field held a name and nothing else - no position, no
+     * address of their own - so the new row gets a name and two nulls. That is not a downgrade, it is
+     * exactly what was known, now in a shape that can hold more.</p>
+     *
+     * <p>Idempotent by construction: it only inserts where the client has no contact rows at all, so a
+     * second run finds nothing to do, and a client whose contacts have since been edited (or deliberately
+     * emptied and then re-populated) is never given its old string back.</p>
+     */
+    private void migrateClientContactPersons() {
+        try {
+            if (!columnExists("CLIENT", "CONTACT_PERSON") || !tableExists("PARTNER_CONTACT")) {
+                return;
+            }
+            int moved = jdbc.update("""
+                    INSERT INTO PARTNER_CONTACT (COMPANY_ID, CLIENT_ID, NAME)
+                    SELECT c.COMPANY_ID, c.ID, TRIM(c.CONTACT_PERSON)
+                    FROM CLIENT c
+                    WHERE c.CONTACT_PERSON IS NOT NULL
+                      AND TRIM(c.CONTACT_PERSON) <> ''
+                      AND NOT EXISTS (SELECT 1 FROM PARTNER_CONTACT pc WHERE pc.CLIENT_ID = c.ID)
+                    """);
+            if (moved > 0) {
+                log.info("Moved {} client contact person(s) into PARTNER_CONTACT.", moved);
+            }
+        } catch (Exception e) {
+            log.warn("Could not migrate CLIENT.CONTACT_PERSON into PARTNER_CONTACT: {}", e.getMessage());
         }
     }
 

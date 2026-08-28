@@ -8,6 +8,7 @@ import com.example.skladdo.model.CompanyType;
 import com.example.skladdo.model.Manufacturer;
 import com.example.skladdo.model.OrderStatus;
 import com.example.skladdo.model.PartnerCategory;
+import com.example.skladdo.model.PartnerContact;
 import com.example.skladdo.model.PenaltyPeriod;
 import com.example.skladdo.model.PermissionModule;
 import com.example.skladdo.model.Product;
@@ -31,6 +32,7 @@ import com.example.skladdo.model.WarehouseMethod;
 import com.example.skladdo.model.WarehouseStock;
 import com.example.skladdo.repository.CategoryRepository;
 import com.example.skladdo.repository.ClientRepository;
+import com.example.skladdo.repository.PartnerContactRepository;
 import com.example.skladdo.repository.CompanyRepository;
 import com.example.skladdo.repository.CompanySettingsRepository;
 import com.example.skladdo.repository.ManufacturerRepository;
@@ -126,6 +128,7 @@ public class DataInitializer implements CommandLineRunner {
     private final PartnerCategoryRepository partnerCategoryRepository;
     private final ManufacturerRepository manufacturerRepository;
     private final ClientRepository clientRepository;
+    private final PartnerContactRepository partnerContactRepository;
     private final ProductRepository productRepository;
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final SalesOrderRepository salesOrderRepository;
@@ -152,6 +155,7 @@ public class DataInitializer implements CommandLineRunner {
                            PartnerCategoryRepository partnerCategoryRepository,
                            ManufacturerRepository manufacturerRepository,
                            ClientRepository clientRepository,
+                           PartnerContactRepository partnerContactRepository,
                            ProductRepository productRepository,
                            PurchaseOrderRepository purchaseOrderRepository,
                            SalesOrderRepository salesOrderRepository,
@@ -171,6 +175,7 @@ public class DataInitializer implements CommandLineRunner {
         this.partnerCategoryRepository = partnerCategoryRepository;
         this.manufacturerRepository = manufacturerRepository;
         this.clientRepository = clientRepository;
+        this.partnerContactRepository = partnerContactRepository;
         this.productRepository = productRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.salesOrderRepository = salesOrderRepository;
@@ -232,6 +237,7 @@ public class DataInitializer implements CommandLineRunner {
             manufacturers = manufacturerRepository.saveAll(manufacturers);
 
             List<Client> clients = clientRepository.saveAll(buildClients());
+            seedPartnerContacts(clients, manufacturers);
 
             // Company-wide settings and the tax-rate catalogue. Products are stamped with the default
             // (standard VAT) rate so the catalogue has tax-inclusive prices to display out of the box.
@@ -966,11 +972,43 @@ public class DataInitializer implements CommandLineRunner {
             client.setEmail("info@" + slug + ".example");
             client.setPhone("+372 " + (5000000 + RANDOM.nextInt(2999999)));
             client.setAddress(RANDOM.nextInt(120) + " Tööstuse tee, Tallinn");
-            client.setContactPerson(CONTACT_PEOPLE[idx % CONTACT_PEOPLE.length]);
             client.setActive(true);
             list.add(client);
         }
         return list;
+    }
+
+    /**
+     * Gives every seeded partner a couple of named people, so the contacts list and the pickers that read
+     * it (the purchase-order form, the compose-email recipient) have something to show in the demo data
+     * rather than looking broken.
+     */
+    private void seedPartnerContacts(List<Client> clients, List<Manufacturer> manufacturers) {
+        List<PartnerContact> contacts = new ArrayList<>();
+        for (int i = 0; i < clients.size(); i++) {
+            contacts.add(contact(CONTACT_PEOPLE[i % CONTACT_PEOPLE.length], "Purchasing",
+                    "purchasing@client" + (i + 1) + ".example", clients.get(i).getId(), null));
+            contacts.add(contact(CONTACT_PEOPLE[(i + 3) % CONTACT_PEOPLE.length], "Accounts",
+                    "accounts@client" + (i + 1) + ".example", clients.get(i).getId(), null));
+        }
+        for (int i = 0; i < manufacturers.size(); i++) {
+            contacts.add(contact(CONTACT_PEOPLE[(i + 1) % CONTACT_PEOPLE.length], "Sales",
+                    "sales@supplier" + (i + 1) + ".example", null, manufacturers.get(i).getId()));
+            contacts.add(contact(CONTACT_PEOPLE[(i + 5) % CONTACT_PEOPLE.length], "Logistics",
+                    "logistics@supplier" + (i + 1) + ".example", null, manufacturers.get(i).getId()));
+        }
+        partnerContactRepository.saveAll(contacts);
+    }
+
+    private static PartnerContact contact(String name, String position, String email,
+                                          Long clientId, Long manufacturerId) {
+        PartnerContact contact = new PartnerContact();
+        contact.setName(name);
+        contact.setPosition(position);
+        contact.setEmail(email);
+        contact.setClientId(clientId);
+        contact.setManufacturerId(manufacturerId);
+        return contact;
     }
 
     private static final String[] CONTACT_PEOPLE = {

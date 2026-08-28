@@ -36,7 +36,8 @@ public class Client {
 
     private String address;
 
-    private String contactPerson;
+    // The single contactPerson string that used to live here is now a PartnerContact row (or several) -
+    // one name with no way to reach them was never enough. SchemaMigrations moved the existing values.
 
     @Column(length = 2000)
     private String notes;

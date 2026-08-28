@@ -6,6 +6,7 @@ import com.example.skladdo.model.Manufacturer;
 import com.example.skladdo.model.PartnerCategory;
 import com.example.skladdo.repository.ManufacturerRepository;
 import com.example.skladdo.repository.PartnerCategoryRepository;
+import com.example.skladdo.repository.PartnerContactRepository;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -22,14 +23,19 @@ public class ManufacturerService {
 
     private final ManufacturerRepository manufacturerRepository;
     private final PartnerCategoryRepository partnerCategoryRepository;
+    private final PartnerContactRepository contactRepository;
 
     private final AuditService auditService;
 
+    // The contact repository rather than PartnerContactService: that service already depends on this one
+    // (it scopes every call through the manufacturer), and taking it back would be a constructor cycle.
     public ManufacturerService(ManufacturerRepository manufacturerRepository,
                                PartnerCategoryRepository partnerCategoryRepository,
+                               PartnerContactRepository contactRepository,
                                AuditService auditService) {
         this.manufacturerRepository = manufacturerRepository;
         this.partnerCategoryRepository = partnerCategoryRepository;
+        this.contactRepository = contactRepository;
         this.auditService = auditService;
     }
 
@@ -95,9 +101,15 @@ public class ManufacturerService {
         return saved;
     }
 
+    // Transactional so the contacts and the manufacturer are removed together: taking the contacts out and
+    // then failing on the manufacturer would leave a live record with its people silently gone.
+    @org.springframework.transaction.annotation.Transactional
     public void delete(Long id) {
         Manufacturer manufacturer = findById(id);
         String name = manufacturer.getName();
+        // Contacts hold the manufacturer id as a plain column, so nothing at the database level removes
+        // them - left behind they would belong to nobody and be reachable from nowhere.
+        contactRepository.deleteByManufacturerId(id);
         manufacturerRepository.delete(manufacturer);
         auditService.record(AuditService.ENTITY_MANUFACTURER, id, AuditAction.DELETE, name);
     }

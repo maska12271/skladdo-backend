@@ -18,6 +18,10 @@ public record OrderDetailsDto(
         Long counterpartyId,         // client (sales) or manufacturer (purchase)
         String counterpartyName,
         String counterpartyLabel,    // "Client" | "Manufacturer"
+        // The named person at the manufacturer this purchase is addressed to, already formatted as
+        // "Name (Position)". Null for sales orders, and for a purchase with nobody named or whose contact
+        // has since been removed - a departed colleague must not make the order unreadable.
+        String contactName,
         LocalDate orderDate,
         LocalDate closingDate,
         LocalDate expectedDeliveryDate, // null for sales orders

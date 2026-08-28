@@ -38,13 +38,21 @@ public class CompanyMailSenderFactory {
         if (port != null) {
             sender.setPort(port);
         }
-        sender.setUsername(username);
-        sender.setPassword(password);
+        // Authenticate only when there is something to authenticate with. A blank username means the
+        // server takes mail unauthenticated - the local Mailpit sink dev runs against does, and it does
+        // not advertise AUTH at all, so announcing that we intend to authenticate fails the connection
+        // before a single message is written. Any real host will have credentials and takes the branch
+        // below.
+        boolean authenticate = username != null && !username.isBlank();
+        if (authenticate) {
+            sender.setUsername(username);
+            sender.setPassword(password);
+        }
         sender.setDefaultEncoding("UTF-8");
 
         Properties props = sender.getJavaMailProperties();
         props.put("mail.transport.protocol", "smtp");
-        props.put("mail.smtp.auth", "true");
+        props.put("mail.smtp.auth", String.valueOf(authenticate));
         props.put("mail.smtp.starttls.enable", String.valueOf(useTls));
         // Fail fast rather than hang the request thread if the SMTP server is unreachable.
         props.put("mail.smtp.connectiontimeout", "10000");

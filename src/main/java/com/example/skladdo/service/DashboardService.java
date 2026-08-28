@@ -29,7 +29,7 @@ public class DashboardService {
     private static final int MONTHS = 12;
     private static final int TOP_LIMIT = 5;
     private static final int ACTIVITY_LIMIT = 10;
-    private static final int LATEST_TENDERS = 5;
+    private static final int ACTIVE_TENDERS_SHOWN = 5;
     private static final int LOW_STOCK_LIMIT = 10;
 
     // Order/tender statuses considered "active" — mirrors the frontend's isActiveStatus().
@@ -127,8 +127,14 @@ public class DashboardService {
         // ---- products block ---------------------------------------------------------------------
         ProductsBlock productsBlock = null;
         if (canProducts) {
+            // Anything that needs restocking attention: below its configured minimum, OR simply empty.
+            // The second half matters on its own - a product with no minimum set is never "below" one, but
+            // having none left is the most urgent state a product can be in, and a widget that omitted it
+            // would be quietly hiding the worst rows. Mirrors the `below,out` filter the card links to.
             List<LowStockRow> lowStock = products.stream()
-                    .filter(p -> nz(p.getStockQuantity()) < nz(p.getMinimumStock()))
+                    .filter(p -> needsRestocking(nz(p.getStockQuantity()), nz(p.getMinimumStock())))
+                    // Worst first: how far under the minimum, with the empties (which have no meaningful
+                    // shortfall when no minimum is set) sorted by quantity so they lead.
                     .sorted(Comparator.comparingInt(p -> nz(p.getStockQuantity()) - nz(p.getMinimumStock())))
                     .map(p -> new LowStockRow(
                             p.getId(),
@@ -171,9 +177,12 @@ public class DashboardService {
             BigDecimal totalValue = tenders.stream()
                     .map(DashboardService::baseOf)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
-            List<TenderRow> latest = tenders.stream()
+            // The widget is about what still needs working on, so closed and cancelled tenders are left
+            // out entirely - newest first among the ones that are still running.
+            List<TenderRow> active = tenders.stream()
+                    .filter(t -> isActive(t.getStatus()))
                     .sorted(Comparator.comparing(Tender::getId, Comparator.nullsLast(Comparator.reverseOrder())))
-                    .limit(LATEST_TENDERS)
+                    .limit(ACTIVE_TENDERS_SHOWN)
                     .map(t -> new TenderRow(
                             t.getId(),
                             t.getTitle(),
@@ -182,7 +191,7 @@ public class DashboardService {
                             t.getEstimatedValue() != null ? baseOf(t) : null
                     ))
                     .toList();
-            tendersBlock = new TendersBlock(activeTenders, tenders.size(), totalValue, latest);
+            tendersBlock = new TendersBlock(activeTenders, tenders.size(), totalValue, active);
         }
 
         // ---- top clients (revenue this month) ---------------------------------------------------
@@ -438,6 +447,22 @@ public class DashboardService {
     private static String tenderCustomer(Tender t) {
         // The tender's requester is its linked client.
         return t.getClient() != null ? t.getClient().getName() : null;
+    }
+
+    /**
+     * Whether a product belongs in the dashboard's low-stock figure: under its minimum, or out entirely.
+     *
+     * <p>Deliberately wider than {@code ProductRepository.findLowStock()} / {@code ReorderService}, which
+     * stay on {@code qty < min}. Those two answer "what should we order, and how much?" - a question that
+     * needs a minimum to have an answer, so a product without one is not theirs to raise. This answers
+     * "what needs looking at", where having nothing left is the whole point even if nobody ever set a
+     * threshold for it.</p>
+     *
+     * <p>Kept in step with the product list's {@code below,out} filter (see {@code ProductService.search}),
+     * so the count on the card and the rows behind the click are the same set.</p>
+     */
+    private static boolean needsRestocking(int quantity, int minimum) {
+        return quantity < minimum || quantity <= 0;
     }
 
     private static boolean isActive(String status) {

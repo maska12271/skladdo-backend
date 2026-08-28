@@ -5,6 +5,7 @@ import com.example.skladdo.dto.NotificationDto;
 import com.example.skladdo.model.Notification;
 import com.example.skladdo.model.NotificationType;
 import com.example.skladdo.model.PermissionModule;
+import com.example.skladdo.model.Role;
 import com.example.skladdo.model.User;
 import com.example.skladdo.repository.NotificationRepository;
 import com.example.skladdo.repository.UserRepository;
@@ -69,6 +70,33 @@ public class NotificationService {
             }
         }
         return created;
+    }
+
+    /**
+     * Notifies the people who run the company - owners and administrators.
+     *
+     * <p>Its own method rather than {@link #notifyModuleViewers} with some module picked out, because the
+     * audience here is not "whoever can see X": a manager bypasses permission checks entirely, so every
+     * module reports them as a viewer and any module would also drag in every regular user who happens to
+     * hold that permission. Someone joining the company is management's news, not the whole office's.</p>
+     */
+    @Transactional
+    public int notifyManagers(NotificationType type, String details, String linkPath, String dedupeKey) {
+        int created = 0;
+        for (User user : userRepository.findByCompanyIdOrderByIdDesc(currentCompanyId())) {
+            if (isActiveManager(user) && notifyUser(user, type, details, linkPath, dedupeKey)) {
+                created++;
+            }
+        }
+        return created;
+    }
+
+    /** Same exclusions {@link #canView} makes: an alert for an account that cannot sign in is never read. */
+    private static boolean isActiveManager(User user) {
+        if (Boolean.TRUE.equals(user.getArchived()) || user.isDeleted()) {
+            return false;
+        }
+        return user.getRole() == Role.OWNER || user.getRole() == Role.ADMINISTRATOR;
     }
 
     /**

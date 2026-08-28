@@ -64,9 +64,17 @@ public class ProductService {
 
     /**
      * Paged product search with full filter parity for the list page: free-text search across
-     * name / SKU / manufacturer name, multi-select category and manufacturer, active flag, and the
-     * computed stock status (mirrors the frontend's utils/stock.js: out = qty&le;0, low = 0&lt;qty&le;min,
-     * ok = qty&gt;min). Any argument that is null/empty is simply not applied.
+     * name / SKU / manufacturer name, multi-select category and manufacturer, active flag, and stock
+     * level. Any argument that is null/empty is simply not applied.
+     *
+     * <p>The stock levels are {@code out} (qty&le;0), {@code below} (qty&lt;min) and {@code ok}
+     * (qty&gt;min). {@code below} is deliberately the <em>same</em> predicate as
+     * {@link com.example.skladdo.repository.ProductRepository#findLowStock()}, {@code ReorderService} and
+     * the dashboard's low-stock figure, so that clicking a count of 7 lands on exactly those 7 rows. It
+     * replaced a narrower "low" that required {@code qty&gt;0}: a product that has run out entirely is the
+     * worst case of being below its minimum, and excluding it hid precisely the rows that mattered most.
+     * {@code out} overlaps it on purpose - "show me the empties" is a different question from "show me
+     * what needs reordering", and a product with no minimum set is only ever the former.</p>
      */
     public Page<Product> search(String search, List<Long> categoryIds, List<Long> manufacturerIds,
                                 Boolean active, List<String> stockStatuses, Pageable pageable) {
@@ -97,8 +105,11 @@ public class ProductService {
                 for (String status : stockStatuses) {
                     if ("out".equals(status)) {
                         stockPredicates.add(cb.lessThanOrEqualTo(qty, 0));
-                    } else if ("low".equals(status)) {
-                        stockPredicates.add(cb.and(cb.greaterThan(qty, 0), cb.lessThanOrEqualTo(qty, min)));
+                    } else if ("below".equals(status)) {
+                        // The one "running out" rule the whole application shares - see the method note.
+                        // Nulls are coalesced because both columns are nullable on older rows.
+                        stockPredicates.add(cb.lessThan(
+                                cb.coalesce(qty, 0), cb.coalesce(min, 0)));
                     } else if ("ok".equals(status)) {
                         stockPredicates.add(cb.greaterThan(qty, min));
                     }

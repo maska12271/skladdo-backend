@@ -8,12 +8,14 @@ import com.example.skladdo.model.Company;
 import com.example.skladdo.model.CompanySettings;
 import com.example.skladdo.model.EmailTemplate;
 import com.example.skladdo.model.Manufacturer;
+import com.example.skladdo.model.PartnerContact;
 import com.example.skladdo.model.SentEmail;
 import com.example.skladdo.model.SentEmailStatus;
 import com.example.skladdo.model.User;
 import com.example.skladdo.repository.CompanyRepository;
 import com.example.skladdo.repository.EmailTemplateRepository;
 import com.example.skladdo.repository.ManufacturerRepository;
+import com.example.skladdo.repository.PartnerContactRepository;
 import com.example.skladdo.repository.SentEmailRepository;
 import com.example.skladdo.repository.UserRepository;
 import com.example.skladdo.security.CustomUserDetails;
@@ -54,6 +56,7 @@ public class EmailSendingService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final ManufacturerRepository manufacturerRepository;
+    private final PartnerContactRepository contactRepository;
     private final EmailTemplateRepository emailTemplateRepository;
     private final SentEmailRepository sentEmailRepository;
     private final CompanySettingsService companySettingsService;
@@ -68,6 +71,7 @@ public class EmailSendingService {
     private final String publicBaseUrl;
 
     public EmailSendingService(ManufacturerRepository manufacturerRepository,
+                               PartnerContactRepository contactRepository,
                                EmailTemplateRepository emailTemplateRepository,
                                SentEmailRepository sentEmailRepository,
                                CompanySettingsService companySettingsService,
@@ -87,6 +91,7 @@ public class EmailSendingService {
         this.userRepository = userRepository;
         this.encryptionService = encryptionService;
         this.mailSenderFactory = mailSenderFactory;
+        this.contactRepository = contactRepository;
         this.renderer = renderer;
         this.planService = planService;
         this.inboundDomain = inboundDomain;
@@ -100,9 +105,15 @@ public class EmailSendingService {
      * Sends one email per manufacturer id. Renders {@code subject}/{@code body} per recipient, records an
      * audit row for each, and returns a per-recipient summary. Throws {@link BadRequestException} only for
      * whole-batch problems (SMTP not configured); individual send failures are captured in the result.
+     *
+     * <p>{@code contactId} addresses a named person at the manufacturer instead of the company's own
+     * address. It applies to a single-recipient send only: a contact belongs to one manufacturer, so
+     * across a bulk selection the question has no answer. An id that names nobody at the manufacturer
+     * being written to falls back to the company address rather than failing the send - the message is
+     * what matters, and it still reaches the right supplier.</p>
      */
     public SendEmailResult sendBulk(List<Long> manufacturerIds, Long templateId, String subject, String body,
-                                    List<MultipartFile> files) {
+                                    Long contactId, List<MultipartFile> files) {
         planService.assertEmailsEnabled();
         CompanySettings settings = companySettingsService.getOrCreate();
         requireSmtpConfigured(settings);
@@ -127,11 +138,16 @@ public class EmailSendingService {
         int sent = 0;
         int failed = 0;
 
+        // Only ever one, and only when exactly one manufacturer was selected - see the method note.
+        PartnerContact contact = manufacturerIds.size() == 1 && contactId != null
+                ? contactRepository.findByIdAndManufacturerId(contactId, manufacturerIds.get(0)).orElse(null)
+                : null;
+
         for (Long manufacturerId : manufacturerIds) {
             Manufacturer manufacturer = manufacturerRepository.findById(manufacturerId)
                     .orElseThrow(() -> new ResourceNotFoundException("Manufacturer not found with id: " + manufacturerId));
 
-            SentEmail record = sendOne(sender, settings, manufacturer, template, subject, body,
+            SentEmail record = sendOne(sender, settings, manufacturer, contact, template, subject, body,
                     currentUser, company, signature, attachments, batchId);
             if (record.getStatus() == SentEmailStatus.SENT) {
                 sent++;
@@ -188,7 +204,7 @@ public class EmailSendingService {
      * a send failure is recorded on the row as {@link SentEmailStatus#FAILED} with a reason.
      */
     private SentEmail sendOne(JavaMailSenderImpl sender, CompanySettings settings, Manufacturer manufacturer,
-                              EmailTemplate template, String rawSubject, String rawBody,
+                              PartnerContact contact, EmailTemplate template, String rawSubject, String rawBody,
                               CustomUserDetails currentUser, Company company,
                               String signature, List<Attachment> attachments, String batchId) {
         String token = generateToken();
@@ -201,11 +217,17 @@ public class EmailSendingService {
         }
         renderedBody = injectTrackingPixel(renderedBody, token);
 
+        // The contact's own address when there is one, otherwise the manufacturer's. A contact with no
+        // address is not a recipient, so the send falls back rather than failing on an empty To.
+        String recipient = contact != null && contact.getEmail() != null && !contact.getEmail().isBlank()
+                ? contact.getEmail()
+                : manufacturer.getEmail();
+
         SentEmail record = new SentEmail();
         record.setBatchId(batchId);
         record.setManufacturer(manufacturer);
         record.setManufacturerNameSnapshot(manufacturer.getName());
-        record.setRecipientEmail(manufacturer.getEmail() != null ? manufacturer.getEmail() : "");
+        record.setRecipientEmail(recipient != null ? recipient : "");
         record.setTemplateId(template != null ? template.getId() : null);
         record.setSubjectSnapshot(renderedSubject);
         record.setBodySnapshot(renderedBody);
@@ -215,16 +237,16 @@ public class EmailSendingService {
         }
 
         try {
-            if (manufacturer.getEmail() == null || manufacturer.getEmail().isBlank()) {
+            if (recipient == null || recipient.isBlank()) {
                 throw new IllegalArgumentException("Manufacturer has no email address");
             }
-            MimeMessage message = buildMessage(sender, settings, manufacturer.getEmail(), token,
+            MimeMessage message = buildMessage(sender, settings, recipient, token,
                     renderedSubject, renderedBody, attachments);
             sender.send(message);
             record.setStatus(SentEmailStatus.SENT);
         } catch (Exception e) {
             log.warn("Failed to send email to manufacturer {} ({}): {}",
-                    manufacturer.getId(), manufacturer.getEmail(), e.getMessage());
+                    manufacturer.getId(), recipient, e.getMessage());
             record.setStatus(SentEmailStatus.FAILED);
             record.setFailureReason(truncate(e.getMessage(), 2000));
         }

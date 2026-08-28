@@ -16,6 +16,15 @@ public interface StorageService {
     /** Stores the file under a random key namespaced by {@code category} (e.g. "images", "documents"). */
     String store(MultipartFile file, String category);
 
+    /**
+     * Stores raw bytes under a random key, for content that never arrived as an upload.
+     *
+     * <p>Used by invitation redemption, which is unauthenticated and therefore has no business exposing an
+     * upload endpoint: the invitee's photo travels inside the (token-gated) accept request instead, as
+     * bytes rather than a multipart part.</p>
+     */
+    String store(byte[] bytes, String contentType, String extension, String category);
+
     /** A fetchable, time-limited GET URL for the object at {@code key}. */
     String presign(String key, Duration ttl);
 

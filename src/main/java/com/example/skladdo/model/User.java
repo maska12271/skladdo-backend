@@ -102,6 +102,15 @@ public class User {
     private String language;
 
     /**
+     * The person's date of birth, as given by them when they accepted their invitation. Optional, and
+     * never asked for again: it is theirs to have entered, not a field the company fills in about them.
+     *
+     * <p>Nullable throughout - accounts created before invitations collected it have none, and an invitee
+     * may leave it blank.</p>
+     */
+    private java.time.LocalDate birthDate;
+
+    /**
      * When this account was permanently retired, or {@code null} while it is a live account.
      *
      * <p>Deleting a user does not remove the row, and that is deliberate: half the application records who

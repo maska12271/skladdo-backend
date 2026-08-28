@@ -83,7 +83,7 @@ public class EmailController {
     public SendEmailResult send(@Valid @RequestPart("request") SendEmailRequest request,
                                 @RequestPart(value = "files", required = false) List<MultipartFile> files) {
         return sendingService.sendBulk(request.manufacturerIds(), request.templateId(),
-                request.subject(), request.body(), files);
+                request.subject(), request.body(), request.contactId(), files);
     }
 
     // --- Sent-email audit trail ------------------------------------------------------------------

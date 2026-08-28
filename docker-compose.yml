@@ -1,5 +1,6 @@
-# Local dev database + object storage. Start with `docker compose up -d`, then run the app as normal —
-# application.properties already points at this instance's default host/port/credentials.
+# Local dev database, object storage and mail sink. Start with `docker compose up -d`, then run the app
+# as normal — application.properties already points at these instances' default host/port/credentials.
+# Sent email is readable at http://localhost:8025.
 # Pinned project name so containers/volumes are `skladdo-*` regardless of the directory this runs from
 # (Compose otherwise derives it from the folder name, which here would be `backend`).
 name: skladdo
@@ -25,6 +26,19 @@ services:
       SERVICES: s3
     ports:
       - "4566:4566"
+
+  # Local SMTP sink for the platform's own outbound mail (invitations, password setup/reset).
+  # Accepts everything, delivers nothing, and shows what was sent at http://localhost:8025 - so the
+  # whole email path can be exercised in dev without an account anywhere or a real inbox to spam.
+  # application.properties points app.mail.platform.* at this; production uses a real SMTP host
+  # through the APP_MAIL_PLATFORM_* env vars (see deploy/.env.example).
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"   # SMTP, what the app connects to
+      - "8025:8025"   # web UI, where you read what it sent
+    environment:
+      MP_MAX_MESSAGES: 500
 
 volumes:
   postgres-data:

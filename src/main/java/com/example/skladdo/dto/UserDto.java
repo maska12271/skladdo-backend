@@ -72,6 +72,11 @@ public record UserDto(
         /** When this account last signed in, or null if it never has. Shown on the user's profile page. */
         java.time.Instant lastLoginAt,
         /**
+         * Date of birth, as the person entered it when they accepted their invitation. Null for accounts
+         * created before invitations asked, and for anyone who left it blank.
+         */
+        java.time.LocalDate birthDate,
+        /**
          * The add-ons the company the session is working in currently pays for. The company-level twin of
          * {@code permissions}: both must pass before a gated feature is offered, so the client hides the
          * tender and manufacturer-email pages entirely when the entitlement is absent.
@@ -94,7 +99,7 @@ public record UserDto(
         return new UserDto(id, email, fullName, role, companyId, companyName, canSeePrices, active,
                 archived, passwordSetupPending, emailSignature, language, permissions, warehouseIds,
                 homeCompanyId, homeCompanyName, partnerSession, homeRole, companyType, platformAdmin,
-                avatarKey, avatarIcon, avatarColor, lastLoginAt, addons);
+                avatarKey, avatarIcon, avatarColor, lastLoginAt, birthDate, addons);
     }
     public static UserDto from(User user) {
         return from(user, null, null);
@@ -131,6 +136,7 @@ public record UserDto(
                 user.getAvatarIcon(),
                 user.getAvatarColor(),
                 user.getLastLoginAt(),
+                user.getBirthDate(),
                 null
         );
     }
@@ -184,6 +190,7 @@ public record UserDto(
                 user.getAvatarIcon(),
                 user.getAvatarColor(),
                 user.getLastLoginAt(),
+                user.getBirthDate(),
                 null
         );
     }
