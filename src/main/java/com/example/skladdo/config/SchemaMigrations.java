@@ -86,6 +86,11 @@ public class SchemaMigrations implements CommandLineRunner {
         // itself, long after the service layer had accepted it.
         dropNotNull("SALES_ORDER_ITEM", "PRODUCT_ID");
 
+        // Deleting a category now un-files the products in it rather than refusing while any exist, so the
+        // column has to accept null. Same reason as above: ddl-auto=update only ever adds, so on a
+        // populated database the delete would still be rejected by the database itself.
+        dropNotNull("PRODUCT", "CATEGORY_ID");
+
         // A service carried a unit ("hour", "visit") for parity with a product, but it never reached an
         // order line or an invoice, so it described nothing anyone could see. Dropped rather than left
         // behind, so the table does not disagree with the entity.

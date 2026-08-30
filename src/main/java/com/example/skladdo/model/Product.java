@@ -48,9 +48,15 @@ public class Product {
     @JoinColumn(nullable = false)
     private Manufacturer manufacturer;
 
-    @NotNull
+    /**
+     * Optional at the database level, unlike the manufacturer above.
+     *
+     * <p>Nothing creates an uncategorised product on purpose - the forms still require a category - but
+     * deleting a category no longer refuses to run just because products are filed under it. Those
+     * products are kept and simply come out of the category, which needs the column to accept null.</p>
+     */
     @ManyToOne
-    @JoinColumn(nullable = false)
+    @JoinColumn(name = "category_id")
     private Category category;
 
     private String size;

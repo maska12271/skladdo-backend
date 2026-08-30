@@ -18,6 +18,17 @@ public record DisplaySettingsDto(
         BigDecimal defaultPrepaymentPercent,
         Integer invoicePaymentTermDays,
         BigDecimal latePaymentPenaltyPercent,
-        String penaltyPeriod
+        String penaltyPeriod,
+        // Day the week starts on in calendars, ISO-8601 (1 = Monday ... 7 = Sunday), or null to follow the
+        // viewer's locale. Here rather than only in the admin-only settings because every user sees a date
+        // picker, not just administrators.
+        Integer firstDayOfWeek,
+        // How dates and times are written across the app, or null to follow the viewer's language. Here
+        // for the same reason as firstDayOfWeek: every user sees dates, not just administrators.
+        String dateFormat,
+        String timeFormat,
+        // Unit a new product/line starts on (e.g. "pcs"). Here rather than only in the admin-only settings
+        // because the unit pickers it seeds are used by everyone, not just administrators.
+        String defaultProductUnit
 ) {
 }

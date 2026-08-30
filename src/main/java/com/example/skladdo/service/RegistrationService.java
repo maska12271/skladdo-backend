@@ -38,6 +38,7 @@ public class RegistrationService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final PlanService planService;
+    private final TaxRateService taxRateService;
     private final AuthService authService;
     private final InviteLinkService inviteLinkService;
 
@@ -45,12 +46,14 @@ public class RegistrationService {
                                UserRepository userRepository,
                                PasswordEncoder passwordEncoder,
                                PlanService planService,
+                               TaxRateService taxRateService,
                                AuthService authService,
                                InviteLinkService inviteLinkService) {
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.planService = planService;
+        this.taxRateService = taxRateService;
         this.authService = authService;
         this.inviteLinkService = inviteLinkService;
     }
@@ -137,6 +140,9 @@ public class RegistrationService {
             for (AddonType addon : addons) {
                 planService.activateAddon(addon);
             }
+            // A starting tax catalogue, stamped with the same bound tenant, so the company can price a
+            // product and issue an invoice without first building one from nothing.
+            taxRateService.seedDefaults();
         } finally {
             TenantContext.clear();
         }

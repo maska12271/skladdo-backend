@@ -49,6 +49,7 @@ import com.example.skladdo.repository.WarehouseConnectionRepository;
 import com.example.skladdo.repository.WarehouseRepository;
 import com.example.skladdo.repository.WarehouseStockRepository;
 import com.example.skladdo.service.PlanService;
+import com.example.skladdo.service.TaxRateService;
 import com.example.skladdo.security.CustomUserDetails;
 import com.example.skladdo.security.TenantContext;
 import org.slf4j.Logger;
@@ -141,6 +142,7 @@ public class DataInitializer implements CommandLineRunner {
     private final WarehouseConnectionRepository warehouseConnectionRepository;
     private final PasswordEncoder passwordEncoder;
     private final PlanService planService;
+    private final TaxRateService taxRateService;
 
     private int poSeq = 0;
     private int soSeq = 0;
@@ -167,7 +169,8 @@ public class DataInitializer implements CommandLineRunner {
                            ProductBatchRepository productBatchRepository,
                            WarehouseConnectionRepository warehouseConnectionRepository,
                            PasswordEncoder passwordEncoder,
-                           PlanService planService) {
+                           PlanService planService,
+                           TaxRateService taxRateService) {
         this.companyRepository = companyRepository;
         this.userRepository = userRepository;
         this.userPermissionRepository = userPermissionRepository;
@@ -188,6 +191,7 @@ public class DataInitializer implements CommandLineRunner {
         this.warehouseConnectionRepository = warehouseConnectionRepository;
         this.passwordEncoder = passwordEncoder;
         this.planService = planService;
+        this.taxRateService = taxRateService;
     }
 
     @Override
@@ -843,21 +847,14 @@ public class DataInitializer implements CommandLineRunner {
         companySettingsRepository.save(settings);
     }
 
-    /** Seeds the Estonian VAT bands and returns the default (standard) rate. */
+    /**
+     * Seeds the Estonian VAT bands and returns the default (standard) rate.
+     *
+     * <p>Delegates to the same catalogue a real company is provisioned with, rather than keeping a second
+     * copy here - the copy drifted, and demo data was still being seeded at the pre-July-2025 22%.</p>
+     */
     private TaxRate seedTaxRates() {
-        TaxRate standard = taxRate("Standard VAT", new BigDecimal("22"), true);
-        taxRate("Reduced VAT", new BigDecimal("9"), false);
-        taxRate("Zero-rated", new BigDecimal("0"), false);
-        return standard;
-    }
-
-    private TaxRate taxRate(String name, BigDecimal percentage, boolean isDefault) {
-        TaxRate rate = new TaxRate();
-        rate.setName(name);
-        rate.setPercentage(percentage);
-        rate.setDefault(isDefault);
-        rate.setActive(true);
-        return taxRateRepository.save(rate);
+        return taxRateService.seedDefaults();
     }
 
     // ---------------------------------------------------------------------------------------------

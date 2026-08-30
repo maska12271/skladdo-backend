@@ -4,6 +4,7 @@ import com.example.skladdo.model.CompanySettings;
 import com.example.skladdo.model.InvoiceTemplate;
 import com.example.skladdo.model.PenaltyPeriod;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -20,6 +21,13 @@ public record CompanySettingsDto(
         boolean pricesIncludeTax,
         // IANA timezone (e.g. "Europe/Tallinn"). Optional: a null/unknown value reads back as UTC.
         @Size(max = 64) String timezone,
+        // Day the week starts on in calendars, ISO-8601 (1 = Monday ... 7 = Sunday). Optional, and null is
+        // meaningful: "follow the viewer's locale".
+        @Min(1) @Max(7) Integer firstDayOfWeek,
+        // How dates and times are written across the app. Optional, and null is meaningful: "follow the
+        // viewer's language". Unrecognised patterns read back as null (see CompanySettings).
+        @Size(max = 16) String dateFormat,
+        @Size(max = 16) String timeFormat,
 
         @NotBlank String invoiceNumberPrefix,
         // Configurable prefix for suggested tender numbers. Optional: blank/null reads back as "TND-".
@@ -76,6 +84,9 @@ public record CompanySettingsDto(
                 s.getCurrency(),
                 s.isPricesIncludeTax(),
                 s.getTimezone(),
+                s.getFirstDayOfWeek(),
+                s.getDateFormat(),
+                s.getTimeFormat(),
                 s.getInvoiceNumberPrefix(),
                 s.getTenderNumberPrefix(),
                 s.getInvoicePaymentTermDays(),
@@ -130,6 +141,9 @@ public record CompanySettingsDto(
         s.setCurrency(currency);
         s.setPricesIncludeTax(pricesIncludeTax);
         s.setTimezone(timezone);
+        s.setFirstDayOfWeek(firstDayOfWeek);
+        s.setDateFormat(dateFormat);
+        s.setTimeFormat(timeFormat);
         s.setInvoiceNumberPrefix(invoiceNumberPrefix);
         s.setTenderNumberPrefix(tenderNumberPrefix);
         s.setInvoicePaymentTermDays(invoicePaymentTermDays);

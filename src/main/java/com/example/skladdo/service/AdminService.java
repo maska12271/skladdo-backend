@@ -93,6 +93,7 @@ public class AdminService {
     private final com.example.skladdo.repository.StoredFileRepository storedFileRepository;
     private final com.example.skladdo.repository.TenantFootprintRepository footprintRepository;
     private final PlanService planService;
+    private final TaxRateService taxRateService;
     private final PasswordResetService passwordResetService;
     private final PasswordEncoder passwordEncoder;
 
@@ -102,6 +103,7 @@ public class AdminService {
                         com.example.skladdo.repository.StoredFileRepository storedFileRepository,
                         com.example.skladdo.repository.TenantFootprintRepository footprintRepository,
                         PlanService planService,
+                        TaxRateService taxRateService,
                         PasswordResetService passwordResetService,
                         PasswordEncoder passwordEncoder) {
         this.companyRepository = companyRepository;
@@ -110,6 +112,7 @@ public class AdminService {
         this.storedFileRepository = storedFileRepository;
         this.footprintRepository = footprintRepository;
         this.planService = planService;
+        this.taxRateService = taxRateService;
         this.passwordResetService = passwordResetService;
         this.passwordEncoder = passwordEncoder;
     }
@@ -331,6 +334,8 @@ public class AdminService {
 
         TenantContext.callAs(saved.getId(), () -> {
             planService.startSubscription(plan);
+            // A starting tax catalogue, so the new company can price and invoice without building one first.
+            taxRateService.seedDefaults();
             return null;
         });
 
