@@ -174,7 +174,11 @@ public class CompanySettingsService {
                 settings.getDefaultPrepaymentPercent(),
                 settings.getInvoicePaymentTermDays(),
                 settings.getLatePaymentPenaltyPercent(),
-                settings.getPenaltyPeriod() != null ? settings.getPenaltyPeriod().name() : null
+                settings.getPenaltyPeriod() != null ? settings.getPenaltyPeriod().name() : null,
+                settings.getFirstDayOfWeek(),
+                settings.getDateFormat(),
+                settings.getTimeFormat(),
+                settings.getDefaultProductUnit()
         );
     }
 }

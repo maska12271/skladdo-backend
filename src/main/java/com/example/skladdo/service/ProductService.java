@@ -1,6 +1,7 @@
 package com.example.skladdo.service;
 
 import com.example.skladdo.model.AuditAction;
+import com.example.skladdo.exception.BadRequestException;
 import com.example.skladdo.exception.ResourceNotFoundException;
 import com.example.skladdo.model.Category;
 import com.example.skladdo.model.CompanySettings;
@@ -134,7 +135,13 @@ public class ProductService {
     public Product save(Product product) {
         // A brand-new product (no id yet) picks up the company's new-product defaults; existing products
         // being re-saved (e.g. order stock adjustments) are untouched.
+        //
+        // The category check is deliberately limited to new products for the same reason. Since deleting a
+        // category un-files its products, an existing product may legitimately have none - and this is the
+        // path a stock adjustment re-saves it through, so requiring one here would make an uncategorised
+        // product impossible to sell.
         if (product.getId() == null) {
+            requireCategoryId(product);
             applyNewProductDefaults(product);
         }
         // A blank SKU must be stored as NULL, not "" — the column is unique and many products have no
@@ -151,18 +158,19 @@ public class ProductService {
         return saved;
     }
 
-    @Transactional
-    public Product create(Product product) {
-        Category category = categoryService.findById(product.getCategory().getId());
-        Manufacturer manufacturer = manufacturerService.findById(product.getManufacturer().getId());
-
-        product.setCategory(category);
-        product.setManufacturer(manufacturer);
-
-        applyNewProductDefaults(product);
-        resolveTaxRate(product);
-
-        return productRepository.save(product);
+    /**
+     * The category id a create/update must name, or a plain "this field is required".
+     *
+     * <p>The column is nullable so that deleting a category can un-file its products, which cost
+     * {@code Product.category} its {@code @NotNull} - and with it the clean rejection an omitted category
+     * used to get. Writing a product still requires one, so the check moves here rather than disappearing;
+     * without it an omitted category would be dereferenced below and surface as a 500.</p>
+     */
+    private Long requireCategoryId(Product product) {
+        if (product.getCategory() == null || product.getCategory().getId() == null) {
+            throw new BadRequestException("error.validation.required");
+        }
+        return product.getCategory().getId();
     }
 
     /**
@@ -225,7 +233,7 @@ public class ProductService {
     public Product update(Long id, Product updatedProduct) {
         Product product = findById(id);
 
-        Category category = categoryService.findById(updatedProduct.getCategory().getId());
+        Category category = categoryService.findById(requireCategoryId(updatedProduct));
         Manufacturer manufacturer = manufacturerService.findById(updatedProduct.getManufacturer().getId());
 
         product.setName(updatedProduct.getName());

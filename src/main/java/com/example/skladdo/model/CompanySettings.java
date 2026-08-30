@@ -72,6 +72,59 @@ public class CompanySettings {
         return ZoneId.getAvailableZoneIds().contains(timezone) ? timezone : DEFAULT_TIMEZONE;
     }
 
+    /**
+     * Day the week starts on in calendars, as an ISO-8601 day number (1 = Monday ... 7 = Sunday).
+     *
+     * <p>Nullable, and null is a meaningful value rather than a gap: it means "follow the viewer's
+     * locale", which is exactly what the date picker did before this setting existed. That keeps the
+     * column migration-friendly under {@code ddl-auto=update} - every existing row reads back null and
+     * behaves as it always did - and gives the setting an honest "Automatic" option.</p>
+     */
+    private Integer firstDayOfWeek;
+
+    /**
+     * Effective first day of week, or {@code null} to follow the viewer's locale. Validated on read for
+     * the same reason as {@link #getTimezone()}: an out-of-range value from an old row or a direct API
+     * call degrades to locale behaviour instead of producing a calendar with a missing or duplicated day.
+     */
+    public Integer getFirstDayOfWeek() {
+        return firstDayOfWeek != null && firstDayOfWeek >= 1 && firstDayOfWeek <= 7 ? firstDayOfWeek : null;
+    }
+
+    /**
+     * Date and time patterns the app offers. A closed set rather than free-text: the frontend renders
+     * these itself (one formatter per pattern), so a pattern nothing can render would silently degrade
+     * every date in the app to the locale default with no hint as to why.
+     */
+    public static final java.util.List<String> SUPPORTED_DATE_FORMATS =
+            java.util.List.of("dd.MM.yyyy", "dd/MM/yyyy", "MM/dd/yyyy", "yyyy-MM-dd");
+
+    /** 24-hour and 12-hour clock. See {@link #SUPPORTED_DATE_FORMATS} for why the set is closed. */
+    public static final java.util.List<String> SUPPORTED_TIME_FORMATS =
+            java.util.List.of("HH:mm", "hh:mm a");
+
+    /**
+     * How dates are written across the app, e.g. {@code "dd.MM.yyyy"}. Nullable and meaningful when null,
+     * exactly like {@link #firstDayOfWeek}: null means "follow the viewer's language", which is what every
+     * date did before this setting existed.
+     */
+    @Column(length = 16)
+    private String dateFormat;
+
+    /** How times are written across the app, e.g. {@code "HH:mm"}. Null follows the viewer's language. */
+    @Column(length = 16)
+    private String timeFormat;
+
+    /** Effective date pattern, or null to follow the viewer's locale. Validated on read like the timezone. */
+    public String getDateFormat() {
+        return dateFormat != null && SUPPORTED_DATE_FORMATS.contains(dateFormat) ? dateFormat : null;
+    }
+
+    /** Effective time pattern, or null to follow the viewer's locale. */
+    public String getTimeFormat() {
+        return timeFormat != null && SUPPORTED_TIME_FORMATS.contains(timeFormat) ? timeFormat : null;
+    }
+
     // --- Invoicing -------------------------------------------------------------------------------
 
     /** Prefix for generated invoice numbers (e.g. "INV-"). */

@@ -136,19 +136,17 @@ public class InvoiceService {
     }
 
     /**
-     * Snapshots the full order onto a final invoice (gross total, all lines), and nets off a paid
-     * prepayment against the balance due when one exists. Blocked while a prepayment is still unpaid -
-     * that must be settled or voided first so the final invoice's balance is unambiguous.
+     * Snapshots the full order onto a final invoice (gross total, all lines), and nets off any active
+     * prepayment against the balance due.
+     *
+     * <p>The deduction does not care whether the prepayment has been paid yet. What it is netting off is
+     * an amount that has already been <em>invoiced</em>, and that is true from the moment the prepayment
+     * document exists - so the two documents always sum to the order total, and the customer is never
+     * asked for more than the order is worth. Waiting for payment used to block the final invoice
+     * outright, which forced the deposit to be settled or voided before ordinary invoicing could
+     * continue, for a document that was already correct either way.</p>
      */
     private void buildFinal(Invoice invoice, SalesOrder order, List<Invoice> active) {
-        Invoice unpaidPrepayment = active.stream()
-                .filter(i -> i.getType() == InvoiceType.PREPAYMENT && i.getStatus() == InvoicePaymentStatus.UNPAID)
-                .findFirst().orElse(null);
-        if (unpaidPrepayment != null) {
-            throw new BadRequestException("error.invoice.prepaymentUnsettled",
-                    unpaidPrepayment.getInvoiceNumber());
-        }
-
         // Money snapshot. The order's totalAmount is net (subtotal + delivery); the invoice total due is
         // gross, so add the tax on top.
         BigDecimal subtotal = nz(order.getSubtotalAmount());
@@ -182,12 +180,15 @@ public class InvoiceService {
             invoice.getItems().add(line);
         }
 
-        Invoice paidPrepayment = active.stream()
-                .filter(i -> i.getType() == InvoiceType.PREPAYMENT && i.getStatus() == InvoicePaymentStatus.PAID)
+        // Any non-void prepayment on the order, paid or not - `active` already excludes VOID ones, and a
+        // voided deposit is the one case where nothing should be deducted.
+        Invoice prepayment = active.stream()
+                .filter(i -> i.getType() == InvoiceType.PREPAYMENT)
                 .findFirst().orElse(null);
-        if (paidPrepayment != null) {
-            invoice.setAppliedPrepaymentInvoice(paidPrepayment);
-            invoice.setAppliedPrepaymentAmount(nz(paidPrepayment.getTotalAmount()).min(gross));
+        if (prepayment != null) {
+            invoice.setAppliedPrepaymentInvoice(prepayment);
+            // Capped at the order's gross so an over-sized deposit can never produce a negative balance.
+            invoice.setAppliedPrepaymentAmount(nz(prepayment.getTotalAmount()).min(gross));
         }
     }
 
@@ -410,23 +411,38 @@ public class InvoiceService {
                     BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
-        OrderPaymentStatus status;
+        // Both documents can be owed at once. A final invoice nets the deposit off its own balance whether
+        // or not the deposit has been paid, so an unpaid deposit is still outstanding alongside it - summing
+        // them is what keeps the order's figure equal to what the customer actually owes. With only one
+        // invoice on the order this collapses to exactly what it did before.
+        List<Invoice> owed = new ArrayList<>();
+        owed.add(governing);
+        if (fin != null && pre != null) {
+            owed.add(pre);
+        }
+
         boolean overdue = false;
         BigDecimal amountDue = BigDecimal.ZERO;
         BigDecimal penalty = BigDecimal.ZERO;
+        for (Invoice inv : owed) {
+            PenaltyCalculator.Result result = penaltyFor(inv, today);
+            amountDue = amountDue.add(amountDue(inv, result));
+            penalty = penalty.add(result.penaltyAmount());
+            // Guarded on UNPAID: a settled invoice's due date is history and must not colour the order.
+            overdue = overdue || (inv.getStatus() == InvoicePaymentStatus.UNPAID && result.overdue());
+        }
 
-        if (governing.getStatus() == InvoicePaymentStatus.PAID) {
+        // Settled means every live invoice is paid, not just the governing one - a paid final on top of an
+        // unpaid deposit used to report the whole order as paid.
+        boolean settled = owed.stream().allMatch(i -> i.getStatus() == InvoicePaymentStatus.PAID);
+
+        OrderPaymentStatus status;
+        if (settled) {
             status = fin != null ? OrderPaymentStatus.PAID : OrderPaymentStatus.AWAITING_FINAL;
+        } else if (fin != null) {
+            status = overdue ? OrderPaymentStatus.OVERDUE : OrderPaymentStatus.INVOICED;
         } else {
-            PenaltyCalculator.Result result = penaltyFor(governing, today);
-            overdue = result.overdue();
-            penalty = result.penaltyAmount();
-            amountDue = amountDue(governing, result);
-            if (fin != null) {
-                status = overdue ? OrderPaymentStatus.OVERDUE : OrderPaymentStatus.INVOICED;
-            } else {
-                status = overdue ? OrderPaymentStatus.PREPAYMENT_OVERDUE : OrderPaymentStatus.PREPAYMENT_PENDING;
-            }
+            status = overdue ? OrderPaymentStatus.PREPAYMENT_OVERDUE : OrderPaymentStatus.PREPAYMENT_PENDING;
         }
         return new OrderPaymentSummaryDto(orderId, status.name(), overdue, governing.getCurrency(), amountDue, penalty);
     }

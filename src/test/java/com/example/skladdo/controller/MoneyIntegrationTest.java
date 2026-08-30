@@ -87,7 +87,6 @@ class MoneyIntegrationTest extends ApiTestBase {
                                                           {"type":"PREPAYMENT","prepaymentPercent":30}
                                                           """);
 
-        // Only a *paid* prepayment is netted off.
         mvc.perform(authed(patch("/api/invoices/" + prepayment.path("id").asLong() + "/payment"), s.owner())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -102,6 +101,55 @@ class MoneyIntegrationTest extends ApiTestBase {
         assertThat(settled.path("appliedPrepaymentAmount").decimalValue()).isEqualByComparingTo("360");
         assertThat(settled.path("amountDue").decimalValue())
                 .as("due is the balance, not the whole invoice").isEqualByComparingTo("840");
+    }
+
+    @Test
+    @DisplayName("a final invoice can be issued while the prepayment is still unpaid, and nets it off")
+    void finalInvoiceNetsOffAnUnpaidPrepayment() throws Exception {
+        Shop s = shop();
+        long orderId = order(s, 10, "100", "20");
+        invoice(s.owner(), orderId, """
+                                    {"type":"PREPAYMENT","prepaymentPercent":30}
+                                    """);
+
+        // Deliberately no payment step. Issuing the final used to be refused outright here; what is being
+        // deducted is an amount already *invoiced*, which is true whether or not the deposit has landed.
+        JsonNode settled = invoice(s.owner(), orderId, """
+                                                       {"type":"FINAL"}
+                                                       """);
+
+        assertThat(settled.path("totalAmount").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(settled.path("appliedPrepaymentAmount").decimalValue()).isEqualByComparingTo("360");
+        assertThat(settled.path("amountDue").decimalValue()).isEqualByComparingTo("840");
+    }
+
+    @Test
+    @DisplayName("an order with an unpaid deposit and a final invoice still owes the whole order")
+    void orderSumsTheUnpaidDepositAndTheFinalBalance() throws Exception {
+        Shop s = shop();
+        long orderId = order(s, 10, "100", "20");
+        invoice(s.owner(), orderId, """
+                                    {"type":"PREPAYMENT","prepaymentPercent":30}
+                                    """);
+        invoice(s.owner(), orderId, """
+                                    {"type":"FINAL"}
+                                    """);
+
+        // The two documents split the order between them, so the order's own figure has to add them back
+        // up - reporting only the final's 840 would quietly lose the outstanding deposit.
+        JsonNode summary = orderPaymentSummary(s.owner(), orderId);
+        assertThat(summary.path("amountDue").decimalValue()).isEqualByComparingTo("1200");
+        assertThat(summary.path("paymentStatus").asText()).isEqualTo("INVOICED");
+    }
+
+    /** The derived billing row the sales-order list shows for one order. */
+    private JsonNode orderPaymentSummary(Tenant owner, long orderId) throws Exception {
+        JsonNode all = readJson(mvc.perform(
+                authed(get("/api/sales-orders/payment-summaries"), owner)).andReturn());
+        for (JsonNode row : all) {
+            if (row.path("orderId").asLong() == orderId) return row;
+        }
+        throw new AssertionError("no payment summary for order " + orderId);
     }
 
     @Test
