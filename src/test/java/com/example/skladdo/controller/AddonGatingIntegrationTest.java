@@ -31,6 +31,7 @@ class AddonGatingIntegrationTest extends ApiTestBase {
     private static final List<String> EMAIL_PATHS = List.of(
             "/api/sent-emails?size=1",
             "/api/sent-email-batches?size=1",
+            "/api/scheduled-emails",
             "/api/email-templates");
 
     @Test
@@ -46,6 +47,8 @@ class AddonGatingIntegrationTest extends ApiTestBase {
         }
         // Writes are closed by the same rule, so a client cannot skip the list page and post directly.
         assertThat(statusOf(delete("/api/tenders/999999"), owner)).as("delete a tender").isEqualTo(403);
+        assertThat(statusOf(delete("/api/scheduled-emails/999999"), owner))
+                .as("cancel a scheduled email").isEqualTo(403);
     }
 
     @Test

@@ -12,8 +12,9 @@ import java.util.List;
  */
 public record SentEmailDetailDto(
         Long id,
-        Long manufacturerId,
-        String manufacturerName,
+        String recipientType,
+        Long recipientId,
+        String recipientName,
         String recipientEmail,
         String subject,
         String body,
@@ -37,8 +38,9 @@ public record SentEmailDetailDto(
     public static SentEmailDetailDto from(SentEmail e, List<EmailReply> replies) {
         return new SentEmailDetailDto(
                 e.getId(),
-                e.getManufacturer() != null ? e.getManufacturer().getId() : null,
-                e.getManufacturerNameSnapshot(),
+                e.getRecipientType() != null ? e.getRecipientType().name() : null,
+                e.getRecipientId(),
+                e.getRecipientNameSnapshot(),
                 e.getRecipientEmail(),
                 e.getSubjectSnapshot(),
                 e.getBodySnapshot(),

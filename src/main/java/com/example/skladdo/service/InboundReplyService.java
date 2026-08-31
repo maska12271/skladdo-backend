@@ -56,13 +56,13 @@ public class InboundReplyService {
                             }
 
                             // Tell whoever sent the original email. Dedupe is per sent-email, so a
-                            // manufacturer replying repeatedly on one thread only notifies once.
+                            // partner replying repeatedly on one thread only notifies once.
                             if (email.getSentById() != null) {
                                 notificationService.notifyUserById(
                                         email.getSentById(),
                                         NotificationType.EMAIL_REPLY,
-                                        email.getManufacturerNameSnapshot() != null
-                                                ? email.getManufacturerNameSnapshot()
+                                        email.getRecipientNameSnapshot() != null
+                                                ? email.getRecipientNameSnapshot()
                                                 : email.getRecipientEmail(),
                                         email.getBatchId() != null ? "/emails/" + email.getBatchId() : "/emails",
                                         "EMAIL_REPLY:" + email.getId());

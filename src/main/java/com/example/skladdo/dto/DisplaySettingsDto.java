@@ -29,6 +29,9 @@ public record DisplaySettingsDto(
         String timeFormat,
         // Unit a new product/line starts on (e.g. "pcs"). Here rather than only in the admin-only settings
         // because the unit pickers it seeds are used by everyone, not just administrators.
-        String defaultProductUnit
+        String defaultProductUnit,
+        // The company timezone, so a time every user picks - scheduling an email, say - means the same
+        // wall-clock moment to the whole team rather than whatever zone each browser happens to be in.
+        String timezone
 ) {
 }

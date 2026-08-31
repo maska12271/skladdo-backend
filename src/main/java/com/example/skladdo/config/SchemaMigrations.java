@@ -1,8 +1,10 @@
 package com.example.skladdo.config;
 
+import com.example.skladdo.model.EmailRecipientType;
 import com.example.skladdo.model.NotificationType;
 import com.example.skladdo.model.PermissionModule;
 import com.example.skladdo.model.PlanType;
+import com.example.skladdo.model.ScheduledEmailStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -102,6 +104,13 @@ public class SchemaMigrations implements CommandLineRunner {
         migrateClientContactPersons();
         dropColumn("CLIENT", "CONTACT_PERSON");
 
+        // Emails now go to clients as well as manufacturers, so a sent email records which side it went
+        // to and snapshots the partner's name under a neutral column. Every row written before this was
+        // a manufacturer send, so the backfill is exact rather than a guess - and the old column has to
+        // go afterwards, or the table disagrees with the entity about where the name lives.
+        backfillSentEmailRecipient();
+        dropColumn("SENT_EMAIL", "MANUFACTURER_NAME_SNAPSHOT");
+
         // SENT_EMAIL.template_id is a plain, informational id (see SentEmail#templateId), not a live FK:
         // a sent email is an immutable audit record and templates must stay deletable. An early build
         // modelled it as a @ManyToOne, which would have created a foreign key that blocks deleting any
@@ -121,6 +130,11 @@ public class SchemaMigrations implements CommandLineRunner {
         // NotificationType gained USER_JOINED with self-service invitations; without this, accepting an
         // invitation would 409 on the notification written to tell the company about it.
         widenEnumCheck("NOTIFICATION", "TYPE", NotificationType.class);
+        // Both belong to the emails rework above. Their columns are new, so Hibernate writes a correct
+        // constraint today - these are here because the rule is "one line per enum behind a persisted
+        // column", and the cost of keeping it is one no-op lookup per boot.
+        widenEnumCheck("SENT_EMAIL", "RECIPIENT_TYPE", EmailRecipientType.class);
+        widenEnumCheck("SCHEDULED_EMAIL", "STATUS", ScheduledEmailStatus.class);
 
         // Deleting a user releases its email address so the same person can be invited back. Accounts
         // retired by the build before that rule are still sitting on theirs, which is exactly the state
@@ -213,6 +227,36 @@ public class SchemaMigrations implements CommandLineRunner {
             }
         } catch (Exception e) {
             log.warn("Could not migrate CLIENT.CONTACT_PERSON into PARTNER_CONTACT: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Fills in the two columns a sent email gained when emails stopped being manufacturer-only: which
+     * side of the address book it went to, and the partner name under its neutral column name.
+     *
+     * <p>Exact rather than a guess - clients could not be emailed at all before this, so every existing
+     * row is a manufacturer send. Both updates are guarded on the value still being null, so a second
+     * boot finds nothing to do and a row written since then is never overwritten.</p>
+     */
+    private void backfillSentEmailRecipient() {
+        try {
+            if (!columnExists("SENT_EMAIL", "RECIPIENT_TYPE")) {
+                return; // Entity not yet applied to this schema — nothing to fill in.
+            }
+            if (columnExists("SENT_EMAIL", "MANUFACTURER_NAME_SNAPSHOT")
+                    && columnExists("SENT_EMAIL", "RECIPIENT_NAME_SNAPSHOT")) {
+                int named = jdbc.update("UPDATE SENT_EMAIL SET RECIPIENT_NAME_SNAPSHOT = MANUFACTURER_NAME_SNAPSHOT "
+                        + "WHERE RECIPIENT_NAME_SNAPSHOT IS NULL AND MANUFACTURER_NAME_SNAPSHOT IS NOT NULL");
+                if (named > 0) {
+                    log.info("Carried {} sent-email name snapshot(s) onto RECIPIENT_NAME_SNAPSHOT.", named);
+                }
+            }
+            int typed = jdbc.update("UPDATE SENT_EMAIL SET RECIPIENT_TYPE = 'MANUFACTURER' WHERE RECIPIENT_TYPE IS NULL");
+            if (typed > 0) {
+                log.info("Marked {} pre-existing sent email(s) as manufacturer sends.", typed);
+            }
+        } catch (Exception e) {
+            log.warn("Could not backfill SENT_EMAIL recipient columns: {}", e.getMessage());
         }
     }
 

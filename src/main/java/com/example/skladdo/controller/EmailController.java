@@ -1,6 +1,8 @@
 package com.example.skladdo.controller;
 
 import com.example.skladdo.dto.EmailTemplateDto;
+import com.example.skladdo.dto.RescheduleEmailRequest;
+import com.example.skladdo.dto.ScheduledEmailDto;
 import com.example.skladdo.dto.SendEmailRequest;
 import com.example.skladdo.dto.SendEmailResult;
 import com.example.skladdo.dto.SentEmailBatchDetailDto;
@@ -10,6 +12,7 @@ import com.example.skladdo.dto.SentEmailDto;
 import com.example.skladdo.model.SentEmailStatus;
 import com.example.skladdo.service.EmailSendingService;
 import com.example.skladdo.service.EmailTemplateService;
+import com.example.skladdo.service.ScheduledEmailService;
 import com.example.skladdo.service.SentEmailService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -25,25 +28,29 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 /**
- * Manufacturer email feature: the reusable template library, sending outreach (single or bulk), and the
- * sent-email audit trail. All endpoints are gated by the {@code MANUFACTURER_EMAILS} permission module;
- * the public tracking-pixel and inbound-reply endpoints live in their own (unauthenticated) controllers.
+ * Email feature: the reusable template library, sending outreach to clients and manufacturers (single or
+ * bulk, now or queued for later), and the sent-email audit trail. All endpoints are gated by the
+ * {@code MANUFACTURER_EMAILS} permission module; the public tracking-pixel and inbound-reply endpoints
+ * live in their own (unauthenticated) controllers.
  */
 @RestController
 @RequestMapping("/api")
-@Tag(name = "Manufacturer Emails")
+@Tag(name = "Emails")
 public class EmailController {
 
     private final EmailTemplateService templateService;
     private final EmailSendingService sendingService;
     private final SentEmailService sentEmailService;
+    private final ScheduledEmailService scheduledEmailService;
 
     public EmailController(EmailTemplateService templateService,
                            EmailSendingService sendingService,
-                           SentEmailService sentEmailService) {
+                           SentEmailService sentEmailService,
+                           ScheduledEmailService scheduledEmailService) {
         this.templateService = templateService;
         this.sendingService = sendingService;
         this.sentEmailService = sentEmailService;
+        this.scheduledEmailService = scheduledEmailService;
     }
 
     // --- Templates -------------------------------------------------------------------------------
@@ -75,29 +82,65 @@ public class EmailController {
     // --- Sending ---------------------------------------------------------------------------------
 
     /**
-     * Sends one email per manufacturer. Multipart so the compose form can attach files: the {@code request}
-     * part carries the JSON body, {@code files} carries any attachments (optional).
+     * Sends one email per recipient - or queues the whole send for later, when the request names a
+     * {@code scheduledAt}. Multipart so the compose form can attach files: the {@code request} part
+     * carries the JSON body, {@code files} carries any attachments (optional).
+     *
+     * <p>One endpoint rather than two, because it is one form: the only difference a user makes is
+     * picking a time, and the response shape says which happened ({@code scheduledId} set means nothing
+     * has been attempted yet).</p>
      */
-    @PostMapping(value = "/manufacturers/emails/send", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "/emails/send", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("@perm.canCreate(authentication, 'MANUFACTURER_EMAILS')")
     public SendEmailResult send(@Valid @RequestPart("request") SendEmailRequest request,
                                 @RequestPart(value = "files", required = false) List<MultipartFile> files) {
-        return sendingService.sendBulk(request.manufacturerIds(), request.templateId(),
+        if (request.scheduledAt() != null) {
+            return SendEmailResult.scheduled(scheduledEmailService.schedule(request, files).getId());
+        }
+        return sendingService.sendBulk(request.recipientType(), request.recipientIds(), request.templateId(),
                 request.subject(), request.body(), request.contactId(), files);
+    }
+
+    // --- Scheduled sends -------------------------------------------------------------------------
+
+    /** What is still queued, soonest first. Non-managers see only what they scheduled themselves. */
+    @GetMapping("/scheduled-emails")
+    @PreAuthorize("@perm.canView(authentication, 'MANUFACTURER_EMAILS')")
+    public List<ScheduledEmailDto> listScheduled() {
+        return scheduledEmailService.list();
+    }
+
+    /**
+     * Moves a queued send to a new time. Changing anything else - recipients, message, attachments -
+     * means cancelling and composing again, which is the same amount of work for the user and a great
+     * deal less machinery than an edit mode that has to re-upload files.
+     */
+    @PutMapping("/scheduled-emails/{id}")
+    @PreAuthorize("@perm.canCreate(authentication, 'MANUFACTURER_EMAILS')")
+    public ScheduledEmailDto reschedule(@PathVariable Long id, @Valid @RequestBody RescheduleEmailRequest request) {
+        return scheduledEmailService.reschedule(id, request.scheduledAt());
+    }
+
+    /** Drops a queued send before it fires, along with the attachments stored for it. */
+    @DeleteMapping("/scheduled-emails/{id}")
+    @PreAuthorize("@perm.canCreate(authentication, 'MANUFACTURER_EMAILS')")
+    public void cancelScheduled(@PathVariable Long id) {
+        scheduledEmailService.cancel(id);
     }
 
     // --- Sent-email audit trail ------------------------------------------------------------------
 
     /**
-     * Per-recipient sent-email list (one row per recipient). Used by the per-user and per-manufacturer email
-     * lists, which filter by {@code senderId}/{@code manufacturerId}. The main emails page uses the grouped
-     * {@code /sent-email-batches} list instead.
+     * Per-recipient sent-email list (one row per recipient). Used by the per-user and per-partner email
+     * lists, which filter by {@code senderId}/{@code manufacturerId}/{@code clientId}. The main emails page
+     * uses the grouped {@code /sent-email-batches} list instead.
      */
     @GetMapping("/sent-emails")
     @PreAuthorize("@perm.canView(authentication, 'MANUFACTURER_EMAILS')")
     public Page<SentEmailDto> listSentEmails(
             @RequestParam(required = false) String search,
             @RequestParam(required = false) Long manufacturerId,
+            @RequestParam(required = false) Long clientId,
             @RequestParam(required = false) Long senderId,
             @RequestParam(required = false) SentEmailStatus status,
             @RequestParam(defaultValue = "0") int page,
@@ -107,7 +150,7 @@ public class EmailController {
     ) {
         Sort sort = sortDir.equalsIgnoreCase("desc") ? Sort.by(sortBy).descending() : Sort.by(sortBy).ascending();
         Pageable pageable = PageRequest.of(page, size, sort);
-        return sentEmailService.findAll(search, manufacturerId, senderId, status, pageable);
+        return sentEmailService.findAll(search, manufacturerId, clientId, senderId, status, pageable);
     }
 
     @GetMapping("/sent-emails/{id}")

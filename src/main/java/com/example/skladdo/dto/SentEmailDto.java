@@ -10,8 +10,9 @@ import java.time.Instant;
  */
 public record SentEmailDto(
         Long id,
-        Long manufacturerId,
-        String manufacturerName,
+        String recipientType,
+        Long recipientId,
+        String recipientName,
         String recipientEmail,
         String subject,
         String status,
@@ -25,8 +26,9 @@ public record SentEmailDto(
     public static SentEmailDto from(SentEmail e) {
         return new SentEmailDto(
                 e.getId(),
-                e.getManufacturer() != null ? e.getManufacturer().getId() : null,
-                e.getManufacturerNameSnapshot(),
+                e.getRecipientType() != null ? e.getRecipientType().name() : null,
+                e.getRecipientId(),
+                e.getRecipientNameSnapshot(),
                 e.getRecipientEmail(),
                 e.getSubjectSnapshot(),
                 e.getStatus() != null ? e.getStatus().name() : null,

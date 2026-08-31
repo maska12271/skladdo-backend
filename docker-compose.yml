@@ -39,6 +39,13 @@ services:
       - "8025:8025"   # web UI, where you read what it sent
     environment:
       MP_MAX_MESSAGES: 500
+      # Accept any username/password, over a plain connection. Needed to exercise a *tenant's* own SMTP
+      # settings locally: EmailSendingService.isSmtpConfigured requires a username, so the app always
+      # announces AUTH, and stock Mailpit does not advertise it - every send failed with
+      # "Authentication failed" before this. Platform mail (invitations) was unaffected because it
+      # connects with no username at all, which is why the gap went unnoticed.
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
 
 volumes:
   postgres-data:

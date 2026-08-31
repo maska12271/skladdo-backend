@@ -178,7 +178,8 @@ public class CompanySettingsService {
                 settings.getFirstDayOfWeek(),
                 settings.getDateFormat(),
                 settings.getTimeFormat(),
-                settings.getDefaultProductUnit()
+                settings.getDefaultProductUnit(),
+                settings.getTimezone()
         );
     }
 }

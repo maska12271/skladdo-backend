@@ -67,9 +67,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/tenders/**").access(addons.requires(AddonType.TENDERS))
                         .requestMatchers(
                                 "/api/email-templates/**",
+                                "/api/emails/**",
+                                "/api/scheduled-emails/**",
                                 "/api/sent-emails/**",
-                                "/api/sent-email-batches/**",
-                                "/api/manufacturers/emails/**"
+                                "/api/sent-email-batches/**"
                         ).access(addons.requires(AddonType.MANUFACTURER_EMAILS))
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll()
