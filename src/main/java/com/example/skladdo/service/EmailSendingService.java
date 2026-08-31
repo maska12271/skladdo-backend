@@ -6,19 +6,19 @@ import com.example.skladdo.exception.BadRequestException;
 import com.example.skladdo.exception.ResourceNotFoundException;
 import com.example.skladdo.model.Company;
 import com.example.skladdo.model.CompanySettings;
+import com.example.skladdo.model.EmailRecipientType;
 import com.example.skladdo.model.EmailTemplate;
-import com.example.skladdo.model.Manufacturer;
 import com.example.skladdo.model.PartnerContact;
 import com.example.skladdo.model.SentEmail;
 import com.example.skladdo.model.SentEmailStatus;
 import com.example.skladdo.model.User;
+import com.example.skladdo.repository.ClientRepository;
 import com.example.skladdo.repository.CompanyRepository;
 import com.example.skladdo.repository.EmailTemplateRepository;
 import com.example.skladdo.repository.ManufacturerRepository;
 import com.example.skladdo.repository.PartnerContactRepository;
 import com.example.skladdo.repository.SentEmailRepository;
 import com.example.skladdo.repository.UserRepository;
-import com.example.skladdo.security.CustomUserDetails;
 import com.example.skladdo.security.EncryptionService;
 import com.example.skladdo.security.SecurityUtil;
 import jakarta.mail.internet.MimeMessage;
@@ -42,12 +42,17 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Orchestrates sending manufacturer outreach: renders the (per-recipient) subject/body, embeds a
+ * Orchestrates outreach to clients and manufacturers: renders the (per-recipient) subject/body, embeds a
  * tracking pixel, sends through the calling company's own SMTP server, and records an immutable
  * {@link SentEmail} audit row for every recipient - successes and failures alike.
  *
  * <p>Bulk sends build the {@link JavaMailSenderImpl} once (SMTP settings don't change mid-batch) but
  * send and catch per recipient, so one bad address or timeout never aborts the rest of the batch.</p>
+ *
+ * <p>There are two ways in. {@link #sendBulk} is the request-time entry point and reads the caller from
+ * the security context. {@link #sendNow} is the same work with the sender and company named explicitly,
+ * which is what the scheduled-send dispatcher needs: it runs on a background thread with a tenant bound
+ * but nobody authenticated.</p>
  */
 @Service
 public class EmailSendingService {
@@ -56,6 +61,7 @@ public class EmailSendingService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final ManufacturerRepository manufacturerRepository;
+    private final ClientRepository clientRepository;
     private final PartnerContactRepository contactRepository;
     private final EmailTemplateRepository emailTemplateRepository;
     private final SentEmailRepository sentEmailRepository;
@@ -71,6 +77,7 @@ public class EmailSendingService {
     private final String publicBaseUrl;
 
     public EmailSendingService(ManufacturerRepository manufacturerRepository,
+                               ClientRepository clientRepository,
                                PartnerContactRepository contactRepository,
                                EmailTemplateRepository emailTemplateRepository,
                                SentEmailRepository sentEmailRepository,
@@ -84,6 +91,7 @@ public class EmailSendingService {
                                @Value("${app.mail.inbound-domain}") String inboundDomain,
                                @Value("${app.public-base-url}") String publicBaseUrl) {
         this.manufacturerRepository = manufacturerRepository;
+        this.clientRepository = clientRepository;
         this.emailTemplateRepository = emailTemplateRepository;
         this.sentEmailRepository = sentEmailRepository;
         this.companySettingsService = companySettingsService;
@@ -98,22 +106,41 @@ public class EmailSendingService {
         this.publicBaseUrl = stripTrailingSlash(publicBaseUrl);
     }
 
-    /** An email attachment read fully into memory once, so it can be attached to every recipient's message. */
-    private record Attachment(String name, String contentType, byte[] bytes) {}
+    /**
+     * An email attachment read fully into memory once, so it can be attached to every recipient's message.
+     *
+     * <p>Public because a scheduled send builds one from stored bytes rather than from an upload.</p>
+     */
+    public record Attachment(String name, String contentType, byte[] bytes) {}
 
     /**
-     * Sends one email per manufacturer id. Renders {@code subject}/{@code body} per recipient, records an
-     * audit row for each, and returns a per-recipient summary. Throws {@link BadRequestException} only for
-     * whole-batch problems (SMTP not configured); individual send failures are captured in the result.
-     *
-     * <p>{@code contactId} addresses a named person at the manufacturer instead of the company's own
-     * address. It applies to a single-recipient send only: a contact belongs to one manufacturer, so
-     * across a bulk selection the question has no answer. An id that names nobody at the manufacturer
-     * being written to falls back to the company address rather than failing the send - the message is
-     * what matters, and it still reaches the right supplier.</p>
+     * Sends one email per recipient id on behalf of the authenticated caller. Renders
+     * {@code subject}/{@code body} per recipient, records an audit row for each, and returns a
+     * per-recipient summary.
      */
-    public SendEmailResult sendBulk(List<Long> manufacturerIds, Long templateId, String subject, String body,
-                                    Long contactId, List<MultipartFile> files) {
+    public SendEmailResult sendBulk(EmailRecipientType recipientType, List<Long> recipientIds, Long templateId,
+                                    String subject, String body, Long contactId, List<MultipartFile> files) {
+        return sendNow(recipientType, recipientIds, templateId, subject, body, contactId,
+                readAttachments(files), SecurityUtil.currentUserId(), SecurityUtil.currentCompanyId());
+    }
+
+    /**
+     * Sends one email per recipient id on behalf of {@code senderUserId}. Throws
+     * {@link BadRequestException} only for whole-batch problems (SMTP not configured); individual send
+     * failures are captured in the result.
+     *
+     * <p>Takes the sender and company as arguments rather than reading the security context, so the
+     * scheduled dispatcher - which has a tenant bound but nobody authenticated - can call it.</p>
+     *
+     * <p>{@code contactId} addresses a named person at the partner instead of the partner's own address.
+     * It applies to a single-recipient send only: a contact belongs to one partner, so across a bulk
+     * selection the question has no answer. An id that names nobody at the partner being written to falls
+     * back to the partner's own address rather than failing the send - the message is what matters, and
+     * it still reaches the right supplier or customer.</p>
+     */
+    public SendEmailResult sendNow(EmailRecipientType recipientType, List<Long> recipientIds, Long templateId,
+                                   String subject, String body, Long contactId,
+                                   List<Attachment> attachments, Long senderUserId, Long companyId) {
         planService.assertEmailsEnabled();
         CompanySettings settings = companySettingsService.getOrCreate();
         requireSmtpConfigured(settings);
@@ -123,13 +150,12 @@ public class EmailSendingService {
                 : null;
         JavaMailSenderImpl sender = mailSenderFactory.create(settings, password);
 
-        CustomUserDetails currentUser = SecurityUtil.currentUser();
-        Company company = companyRepository.findById(SecurityUtil.currentCompanyId()).orElse(null);
+        Company company = companyRepository.findById(companyId).orElse(null);
         EmailTemplate template = resolveTemplate(templateId);
-        // The sender's personal signature (appended to every email) and any attachments, read once.
-        String signature = userRepository.findById(currentUser.getId())
-                .map(User::getEmailSignature).orElse(null);
-        List<Attachment> attachments = readAttachments(files);
+        // The sender's name and personal signature (appended to every email), read once.
+        User senderUser = userRepository.findById(senderUserId).orElse(null);
+        String senderFullName = senderUser != null ? senderUser.getFullName() : null;
+        String signature = senderUser != null ? senderUser.getEmailSignature() : null;
 
         // One id shared by every recipient row of this send, so the sent-emails list can group them.
         String batchId = UUID.randomUUID().toString();
@@ -138,32 +164,31 @@ public class EmailSendingService {
         int sent = 0;
         int failed = 0;
 
-        // Only ever one, and only when exactly one manufacturer was selected - see the method note.
-        PartnerContact contact = manufacturerIds.size() == 1 && contactId != null
-                ? contactRepository.findByIdAndManufacturerId(contactId, manufacturerIds.get(0)).orElse(null)
+        // Only ever one, and only when exactly one recipient was selected - see the method note.
+        PartnerContact contact = recipientIds.size() == 1 && contactId != null
+                ? findContact(recipientType, contactId, recipientIds.get(0))
                 : null;
 
-        for (Long manufacturerId : manufacturerIds) {
-            Manufacturer manufacturer = manufacturerRepository.findById(manufacturerId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Manufacturer not found with id: " + manufacturerId));
+        for (Long recipientId : recipientIds) {
+            EmailRecipient recipient = loadRecipient(recipientType, recipientId);
 
-            SentEmail record = sendOne(sender, settings, manufacturer, contact, template, subject, body,
-                    currentUser, company, signature, attachments, batchId);
+            SentEmail record = sendOne(sender, settings, recipient, contact, template, subject, body,
+                    senderFullName, company, signature, attachments, batchId, senderUserId);
             if (record.getStatus() == SentEmailStatus.SENT) {
                 sent++;
             } else {
                 failed++;
             }
             results.add(new SendEmailResult.RecipientResult(
-                    manufacturer.getId(),
-                    manufacturer.getName(),
+                    recipient.id(),
+                    recipient.name(),
                     record.getRecipientEmail(),
                     record.getStatus().name(),
                     record.getFailureReason(),
                     record.getId()));
         }
 
-        return new SendEmailResult(sent, failed, results);
+        return new SendEmailResult(sent, failed, null, results);
     }
 
     /**
@@ -199,16 +224,35 @@ public class EmailSendingService {
         }
     }
 
+    /** Loads a client or a manufacturer into the shape the send path works in. */
+    private EmailRecipient loadRecipient(EmailRecipientType type, Long id) {
+        if (type == EmailRecipientType.CLIENT) {
+            return EmailRecipient.of(clientRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Client not found with id: " + id)));
+        }
+        return EmailRecipient.of(manufacturerRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Manufacturer not found with id: " + id)));
+    }
+
+    /** The named person at that partner, or null if the id names nobody there. */
+    private PartnerContact findContact(EmailRecipientType type, Long contactId, Long recipientId) {
+        return (type == EmailRecipientType.CLIENT
+                ? contactRepository.findByIdAndClientId(contactId, recipientId)
+                : contactRepository.findByIdAndManufacturerId(contactId, recipientId))
+                .orElse(null);
+    }
+
     /**
      * Renders, sends (best-effort), and persists the audit row for a single recipient. Never throws:
      * a send failure is recorded on the row as {@link SentEmailStatus#FAILED} with a reason.
      */
-    private SentEmail sendOne(JavaMailSenderImpl sender, CompanySettings settings, Manufacturer manufacturer,
+    private SentEmail sendOne(JavaMailSenderImpl sender, CompanySettings settings, EmailRecipient recipient,
                               PartnerContact contact, EmailTemplate template, String rawSubject, String rawBody,
-                              CustomUserDetails currentUser, Company company,
-                              String signature, List<Attachment> attachments, String batchId) {
+                              String senderFullName, Company company, String signature,
+                              List<Attachment> attachments, String batchId, Long senderUserId) {
         String token = generateToken();
-        Map<String, String> tokens = renderer.tokensFor(manufacturer, currentUser, company);
+        String contactName = contact != null ? contact.getName() : null;
+        Map<String, String> tokens = renderer.tokensFor(recipient, contactName, senderFullName, company);
         String renderedSubject = renderer.renderPlain(rawSubject, tokens);
         // Body = message, then the sender's signature (also token-aware), then the tracking pixel.
         String renderedBody = renderer.render(rawBody, tokens);
@@ -217,36 +261,45 @@ public class EmailSendingService {
         }
         renderedBody = injectTrackingPixel(renderedBody, token);
 
-        // The contact's own address when there is one, otherwise the manufacturer's. A contact with no
+        // The contact's own address when there is one, otherwise the partner's. A contact with no
         // address is not a recipient, so the send falls back rather than failing on an empty To.
-        String recipient = contact != null && contact.getEmail() != null && !contact.getEmail().isBlank()
+        String address = contact != null && contact.getEmail() != null && !contact.getEmail().isBlank()
                 ? contact.getEmail()
-                : manufacturer.getEmail();
+                : recipient.email();
 
         SentEmail record = new SentEmail();
         record.setBatchId(batchId);
-        record.setManufacturer(manufacturer);
-        record.setManufacturerNameSnapshot(manufacturer.getName());
-        record.setRecipientEmail(recipient != null ? recipient : "");
+        record.setRecipientType(recipient.type());
+        if (recipient.type() == EmailRecipientType.CLIENT) {
+            record.setClient(clientRepository.getReferenceById(recipient.id()));
+        } else {
+            record.setManufacturer(manufacturerRepository.getReferenceById(recipient.id()));
+        }
+        record.setRecipientNameSnapshot(recipient.name());
+        record.setRecipientEmail(address != null ? address : "");
         record.setTemplateId(template != null ? template.getId() : null);
         record.setSubjectSnapshot(renderedSubject);
         record.setBodySnapshot(renderedBody);
         record.setTrackingToken(token);
+        // Set explicitly rather than left to @CreatedBy: a scheduled send has no authenticated user for
+        // the auditor to report, and the row must still credit whoever scheduled it. Spring Data leaves
+        // the field alone when the auditor is absent, so this value survives.
+        record.setSentById(senderUserId);
         if (!attachments.isEmpty()) {
             record.setAttachmentNames(attachments.stream().map(Attachment::name).collect(Collectors.joining(", ")));
         }
 
         try {
-            if (recipient == null || recipient.isBlank()) {
-                throw new IllegalArgumentException("Manufacturer has no email address");
+            if (address == null || address.isBlank()) {
+                throw new IllegalArgumentException("Recipient has no email address");
             }
-            MimeMessage message = buildMessage(sender, settings, recipient, token,
+            MimeMessage message = buildMessage(sender, settings, address, token,
                     renderedSubject, renderedBody, attachments);
             sender.send(message);
             record.setStatus(SentEmailStatus.SENT);
         } catch (Exception e) {
-            log.warn("Failed to send email to manufacturer {} ({}): {}",
-                    manufacturer.getId(), recipient, e.getMessage());
+            log.warn("Failed to send email to {} {} ({}): {}",
+                    recipient.type(), recipient.id(), address, e.getMessage());
             record.setStatus(SentEmailStatus.FAILED);
             record.setFailureReason(truncate(e.getMessage(), 2000));
         }
@@ -283,7 +336,7 @@ public class EmailSendingService {
     }
 
     /** Reads each uploaded file fully into memory once (skipping empties), so it can be reused per recipient. */
-    private List<Attachment> readAttachments(List<MultipartFile> files) {
+    public List<Attachment> readAttachments(List<MultipartFile> files) {
         List<Attachment> out = new ArrayList<>();
         if (files == null) {
             return out;

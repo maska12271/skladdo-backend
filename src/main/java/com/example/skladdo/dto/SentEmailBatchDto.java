@@ -1,5 +1,7 @@
 package com.example.skladdo.dto;
 
+import com.example.skladdo.model.EmailRecipientType;
+
 import java.time.Instant;
 
 /**
@@ -10,7 +12,7 @@ import java.time.Instant;
  * <p>{@code representativeId} is the id of one underlying {@link com.example.skladdo.model.SentEmail} row,
  * used to open the single-email detail directly when a batch has just one recipient. When
  * {@code recipientCount > 1} the frontend instead opens the batch detail page keyed by {@code batchKey}.
- * {@code manufacturerName}/{@code recipientEmail} are only meaningful for a single-recipient batch.</p>
+ * {@code recipientName}/{@code recipientEmail} are only meaningful for a single-recipient batch.</p>
  */
 public record SentEmailBatchDto(
         String batchKey,
@@ -23,8 +25,9 @@ public record SentEmailBatchDto(
         int repliedCount,
         int sentCount,
         int failedCount,
-        String manufacturerName,
-        String recipientEmail
+        String recipientName,
+        String recipientEmail,
+        String recipientType
 ) {
     /** Maps one aggregate row (see {@code SentEmailRepository#findBatches}) into the DTO. */
     public static SentEmailBatchDto fromRow(Object[] row) {
@@ -40,7 +43,8 @@ public record SentEmailBatchDto(
                 toInt(row[8]),
                 toInt(row[9]),
                 (String) row[10],
-                (String) row[11]
+                (String) row[11],
+                row[12] != null ? ((EmailRecipientType) row[12]).name() : null
         );
     }
 

@@ -39,13 +39,13 @@ public class SentEmailService {
 
     /**
      * Paged, filterable per-recipient list (one row per {@link SentEmail}). {@code search} matches subject /
-     * manufacturer name / recipient; the {@code manufacturerId}, {@code senderId} and {@code status} filters
-     * are optional. Non-managers are always additionally constrained to their own sends regardless of the
-     * {@code senderId} filter. Used by the per-user and per-manufacturer email lists; the main emails page
-     * uses {@link #findBatches} instead.
+     * partner name / recipient; the {@code manufacturerId}, {@code clientId}, {@code senderId} and
+     * {@code status} filters are optional. Non-managers are always additionally constrained to their own
+     * sends regardless of the {@code senderId} filter. Used by the per-user and per-partner email lists;
+     * the main emails page uses {@link #findBatches} instead.
      */
     @Transactional(readOnly = true)
-    public Page<SentEmailDto> findAll(String search, Long manufacturerId, Long senderId,
+    public Page<SentEmailDto> findAll(String search, Long manufacturerId, Long clientId, Long senderId,
                                       SentEmailStatus status, Pageable pageable) {
         Long ownScopeUserId = SecurityUtil.currentUserIsManager() ? null : SecurityUtil.currentUserId();
 
@@ -56,12 +56,15 @@ public class SentEmailService {
                 String like = "%" + search.toLowerCase() + "%";
                 predicates.add(cb.or(
                         cb.like(cb.lower(root.get("subjectSnapshot")), like),
-                        cb.like(cb.lower(root.get("manufacturerNameSnapshot")), like),
+                        cb.like(cb.lower(root.get("recipientNameSnapshot")), like),
                         cb.like(cb.lower(root.get("recipientEmail")), like)
                 ));
             }
             if (manufacturerId != null) {
                 predicates.add(cb.equal(root.get("manufacturer").get("id"), manufacturerId));
+            }
+            if (clientId != null) {
+                predicates.add(cb.equal(root.get("client").get("id"), clientId));
             }
             if (status != null) {
                 predicates.add(cb.equal(root.get("status"), status));
@@ -80,7 +83,7 @@ public class SentEmailService {
 
     /**
      * Paged sent-email list, one row per bulk send (grouped by {@code batchId}), newest first. {@code search}
-     * matches subject / manufacturer name / recipient across a batch's recipients; {@code senderId} optionally
+     * matches subject / partner name / recipient across a batch's recipients; {@code senderId} optionally
      * restricts to one sender. Non-managers are always additionally constrained to their own sends regardless
      * of the {@code senderId} filter.
      */

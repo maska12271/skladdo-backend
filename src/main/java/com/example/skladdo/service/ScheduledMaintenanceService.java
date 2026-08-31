@@ -17,7 +17,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.function.Supplier;
 
 /**
@@ -46,6 +48,7 @@ public class ScheduledMaintenanceService {
     private final InvoiceRepository invoiceRepository;
     private final TenderRepository tenderRepository;
     private final ProductRepository productRepository;
+    private final ScheduledEmailService scheduledEmailService;
 
     public ScheduledMaintenanceService(CompanyRepository companyRepository,
                                        PlanService planService,
@@ -53,7 +56,8 @@ public class ScheduledMaintenanceService {
                                        NotificationService notificationService,
                                        InvoiceRepository invoiceRepository,
                                        TenderRepository tenderRepository,
-                                       ProductRepository productRepository) {
+                                       ProductRepository productRepository,
+                                       ScheduledEmailService scheduledEmailService) {
         this.companyRepository = companyRepository;
         this.planService = planService;
         this.ecbRateService = ecbRateService;
@@ -61,6 +65,7 @@ public class ScheduledMaintenanceService {
         this.invoiceRepository = invoiceRepository;
         this.tenderRepository = tenderRepository;
         this.productRepository = productRepository;
+        this.scheduledEmailService = scheduledEmailService;
     }
 
     /**
@@ -75,6 +80,37 @@ public class ScheduledMaintenanceService {
         int rolled = sweepCompanies("billing rollover", () -> planService.runPeriodRollover() ? 1 : 0);
         if (rolled > 0) {
             log.info("Billing rollover advanced {} companies", rolled);
+        }
+    }
+
+    /**
+     * Sends the emails whose scheduled time has arrived. Runs every minute, which is as precise as a
+     * user picking a time from a clock can expect.
+     *
+     * <p>Deliberately not a {@link #sweepCompanies} pass. That visits every company in the database, and
+     * at this cadence it would be a query per company per minute for work that, most minutes, no company
+     * has. {@code ScheduledEmailService} instead asks once, across all tenants, which companies have
+     * something due, and only those are bound - so a quiet minute costs a single query.</p>
+     */
+    @Scheduled(cron = "${app.jobs.scheduled-emails-cron:0 * * * * *}")
+    public void dispatchScheduledEmails() {
+        List<Long> companies;
+        try {
+            companies = scheduledEmailService.companiesWithDueSends(Instant.now());
+        } catch (Exception e) {
+            log.warn("Could not look up due scheduled emails: {}", e.toString());
+            return;
+        }
+        int dispatched = 0;
+        for (Long companyId : companies) {
+            try {
+                dispatched += TenantContext.callAs(companyId, scheduledEmailService::dispatchDueForCurrentTenant);
+            } catch (Exception e) {
+                log.warn("Scheduled email dispatch failed for company {}: {}", companyId, e.toString());
+            }
+        }
+        if (dispatched > 0) {
+            log.info("Dispatched {} scheduled email(s)", dispatched);
         }
     }
 

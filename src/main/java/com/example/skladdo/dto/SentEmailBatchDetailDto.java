@@ -25,8 +25,9 @@ public record SentEmailBatchDetailDto(
 ) {
     public record RecipientDto(
             Long id,
-            Long manufacturerId,
-            String manufacturerName,
+            String recipientType,
+            Long recipientId,
+            String recipientName,
             String recipientEmail,
             String status,
             boolean viewed,
@@ -37,8 +38,9 @@ public record SentEmailBatchDetailDto(
         public static RecipientDto from(SentEmail e) {
             return new RecipientDto(
                     e.getId(),
-                    e.getManufacturer() != null ? e.getManufacturer().getId() : null,
-                    e.getManufacturerNameSnapshot(),
+                    e.getRecipientType() != null ? e.getRecipientType().name() : null,
+                    e.getRecipientId(),
+                    e.getRecipientNameSnapshot(),
                     e.getRecipientEmail(),
                     e.getStatus() != null ? e.getStatus().name() : null,
                     e.getViewedAt() != null,
