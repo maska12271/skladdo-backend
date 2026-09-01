@@ -88,6 +88,7 @@ public class ScheduledEmailService {
         row.setSubject(request.subject());
         row.setBody(request.body());
         row.setScheduledAt(when);
+        row.setServiceId(request.serviceId());
         row.setStatus(ScheduledEmailStatus.PENDING);
         row.setAttachments(storeAttachments(files));
         return repository.save(row);
@@ -118,6 +119,12 @@ public class ScheduledEmailService {
                 ? repository.findAllByOrderByScheduledAtAsc()
                 : repository.findByCreatedByIdOrderByScheduledAtAsc(SecurityUtil.currentUserId());
         return rows.stream().map(this::toDto).toList();
+    }
+
+    /** Same, narrowed to what is queued for one client - powers the client detail page's own section. */
+    public List<ScheduledEmailDto> list(Long clientId) {
+        Long createdById = SecurityUtil.currentUserIsManager() ? null : SecurityUtil.currentUserId();
+        return repository.findByClientId(clientId, createdById).stream().map(this::toDto).toList();
     }
 
     /** Moves a queued send to a new time. Only a PENDING row can move; one already firing cannot. */

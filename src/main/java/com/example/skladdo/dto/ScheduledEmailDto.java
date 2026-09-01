@@ -26,7 +26,8 @@ public record ScheduledEmailDto(
         String failureReason,
         List<String> attachmentNames,
         Instant createdAt,
-        Long createdById
+        Long createdById,
+        Long serviceId
 ) {
     public static ScheduledEmailDto from(ScheduledEmail e, String translatedFailureReason) {
         return new ScheduledEmailDto(
@@ -40,7 +41,8 @@ public record ScheduledEmailDto(
                 translatedFailureReason,
                 e.getAttachments().stream().map(ScheduledEmailAttachment::getFileName).toList(),
                 e.getCreatedAt(),
-                e.getCreatedById()
+                e.getCreatedById(),
+                e.getServiceId()
         );
     }
 }

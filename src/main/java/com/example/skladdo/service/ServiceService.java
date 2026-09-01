@@ -102,6 +102,7 @@ public class ServiceService {
         service.setCurrency(resolveCurrency(updatedService.getCurrency(), service.getCurrency()));
         service.setActive(updatedService.getActive());
         service.setTaxRate(updatedService.getTaxRate());
+        service.setRecurrenceMonths(updatedService.getRecurrenceMonths());
 
         resolveCategory(service);
         resolveTaxRate(service);

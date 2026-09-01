@@ -103,11 +103,14 @@ public class EmailController {
 
     // --- Scheduled sends -------------------------------------------------------------------------
 
-    /** What is still queued, soonest first. Non-managers see only what they scheduled themselves. */
+    /**
+     * What is still queued, soonest first. Non-managers see only what they scheduled themselves.
+     * {@code clientId} narrows this to one client's own scheduled reminders (the client detail page).
+     */
     @GetMapping("/scheduled-emails")
     @PreAuthorize("@perm.canView(authentication, 'MANUFACTURER_EMAILS')")
-    public List<ScheduledEmailDto> listScheduled() {
-        return scheduledEmailService.list();
+    public List<ScheduledEmailDto> listScheduled(@RequestParam(required = false) Long clientId) {
+        return clientId != null ? scheduledEmailService.list(clientId) : scheduledEmailService.list();
     }
 
     /**

@@ -2,6 +2,7 @@ package com.example.skladdo.model;
 
 import jakarta.persistence.*;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
@@ -85,6 +86,15 @@ public class Service {
     private TaxRate taxRate;
 
     private Boolean active = true;
+
+    /**
+     * How often this service is expected to recur, in months (e.g. {@code 6} for an oil change). Null
+     * means one-time - deliberately no separate boolean flag, the same reasoning that kept an
+     * {@code itemType} discriminator off {@link SalesOrderItem}: a second field just to say what this
+     * one's nullness already says would be a second thing to keep in sync.
+     */
+    @Min(1)
+    private Integer recurrenceMonths;
 
     @CreatedDate
     @Column(updatable = false)
