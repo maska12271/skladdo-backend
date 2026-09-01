@@ -140,14 +140,43 @@ class ScheduledEmailIntegrationTest extends ApiTestBase {
         assertThat(readJson(mvc.perform(authed(get("/api/scheduled-emails"), owner)).andReturn())).isEmpty();
     }
 
+    @Test
+    @DisplayName("a client's scheduled emails can be listed on their own, carrying the source service")
+    void scheduledEmailsFilterByClientAndCarryServiceId() throws Exception {
+        Tenant owner = newBusiness();
+        configureSmtp(owner);
+        long clientA = createClient(owner, "Alpha OU");
+        long clientB = createClient(owner, "Beta OU");
+        long serviceId = readJson(mvc.perform(authed(post("/api/services"), owner)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                         {"name":"Oil Change","price":45,"recurrenceMonths":6}
+                         """)).andReturn()).path("id").asLong();
+
+        schedule(owner, clientA, "Reminder for Alpha", Instant.now().plus(1, ChronoUnit.HOURS), serviceId);
+        schedule(owner, clientB, "Reminder for Beta", Instant.now().plus(1, ChronoUnit.HOURS), null);
+
+        JsonNode forA = readJson(mvc.perform(authed(get("/api/scheduled-emails?clientId=" + clientA), owner)).andReturn());
+        assertThat(forA).hasSize(1);
+        assertThat(forA.get(0).path("subject").asText()).isEqualTo("Reminder for Alpha");
+        assertThat(forA.get(0).path("serviceId").asLong()).isEqualTo(serviceId);
+
+        assertThat(readJson(mvc.perform(authed(get("/api/scheduled-emails"), owner)).andReturn())).hasSize(2);
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     /** Queues one email to one client and returns the send response. */
     private JsonNode schedule(Tenant owner, long clientId, String subject, Instant when) throws Exception {
+        return schedule(owner, clientId, subject, when, null);
+    }
+
+    /** Same, optionally naming the {@code Service} this reminder is about. */
+    private JsonNode schedule(Tenant owner, long clientId, String subject, Instant when, Long serviceId) throws Exception {
         String request = """
                 {"recipientType":"CLIENT","recipientIds":[%d],"subject":"%s",
-                 "body":"<p>Hello {{recipient.name}}</p>","scheduledAt":"%s"}
-                """.formatted(clientId, subject, when);
+                 "body":"<p>Hello {{recipient.name}}</p>","scheduledAt":"%s","serviceId":%s}
+                """.formatted(clientId, subject, when, serviceId == null ? "null" : serviceId);
         // The multipart builder is not a MockHttpServletRequestBuilder, so it cannot go through authed().
         return readJson(mvc.perform(multipart("/api/emails/send")
                 .file(new MockMultipartFile("request", "request", MediaType.APPLICATION_JSON_VALUE,

@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
 /**
  * Services on sales orders.
@@ -197,6 +198,50 @@ class ServiceLineIntegrationTest extends ApiTestBase {
         assertThat(details.path("summary").path("totalUnitsSold").asInt()).isEqualTo(3);
         assertThat(details.path("summary").path("salesOrderCount").asInt()).isEqualTo(1);
         assertThat(details.path("salesOrders")).hasSize(1);
+    }
+
+    // -------------------------------------------------------------------------------------------------
+    // recurrenceMonths
+    // -------------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("recurrenceMonths round-trips through create and update, and stays null for a one-time service")
+    void recurrenceMonthsRoundTrips() throws Exception {
+        Tenant owner = newBusiness();
+
+        JsonNode created = readJson(mvc.perform(authed(post("/api/services"), owner)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                         {"name":"Oil Change","price":45,"recurrenceMonths":6}
+                         """)).andReturn());
+        long serviceId = created.path("id").asLong();
+        assertThat(created.path("recurrenceMonths").asInt()).isEqualTo(6);
+
+        JsonNode updated = readJson(mvc.perform(authed(put("/api/services/" + serviceId), owner)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                         {"name":"Oil Change","price":45,"recurrenceMonths":12}
+                         """)).andReturn());
+        assertThat(updated.path("recurrenceMonths").asInt()).isEqualTo(12);
+
+        JsonNode oneTime = readJson(mvc.perform(authed(post("/api/services"), owner)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                         {"name":"Installation","price":45}
+                         """)).andReturn());
+        assertThat(oneTime.path("recurrenceMonths").isNull()).as("one-time service has no recurrence").isTrue();
+    }
+
+    @Test
+    @DisplayName("a non-positive recurrenceMonths is rejected")
+    void recurrenceMonthsMustBePositive() throws Exception {
+        Tenant owner = newBusiness();
+        int status = mvc.perform(authed(post("/api/services"), owner)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                         {"name":"Bad","price":45,"recurrenceMonths":0}
+                         """)).andReturn().getResponse().getStatus();
+        assertThat(status).isEqualTo(400);
     }
 
     // -------------------------------------------------------------------------------------------------

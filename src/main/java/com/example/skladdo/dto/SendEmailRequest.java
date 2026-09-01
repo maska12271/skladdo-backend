@@ -37,6 +37,13 @@ public record SendEmailRequest(
          * When to send. Null (the common case) means now; a future instant queues the send instead and
          * the response carries a {@code scheduledId} rather than per-recipient results.
          */
-        Instant scheduledAt
+        Instant scheduledAt,
+
+        /**
+         * The {@code Service} this send is a reminder about, when composed from the recurring-service
+         * flow. Null for an ordinary compose. Only meaningful alongside {@link #scheduledAt} - see
+         * {@code ScheduledEmail.serviceId}.
+         */
+        Long serviceId
 ) {
 }

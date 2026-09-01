@@ -68,6 +68,15 @@ public class ScheduledEmail {
     /** The named person to address, for a single-recipient schedule. See {@code SendEmailRequest}. */
     private Long contactId;
 
+    /**
+     * The {@code Service} this reminder is about, when it was queued from selling a recurring
+     * service. Plain id, not a mapped association - same reasoning as {@link #recipientIds}, and it
+     * exists purely so a client's scheduled reminders can be identified by service; it is never read
+     * back into the rendered email (the service name is already baked into {@link #body} as plain
+     * text at authoring time).
+     */
+    private Long serviceId;
+
     @NotBlank
     @Column(nullable = false, length = 500)
     private String subject;
