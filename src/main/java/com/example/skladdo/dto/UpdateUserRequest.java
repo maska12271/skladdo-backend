@@ -12,6 +12,11 @@ public record UpdateUserRequest(
         @NotNull Role role,
         Boolean canSeePrices,
         /**
+         * Whether the account may see the company's aggregate money on the dashboard (turnover, spend,
+         * cash collected, receivables). Meaningful for the restricted roles only - managers always may.
+         */
+        Boolean canSeeCompanyFinancials,
+        /**
          * Optional avatar, set by the administrator on the user's behalf: either an uploaded picture's
          * storage key, or a preset icon + colour. The user can change it themselves afterwards
          * ({@code PUT /api/auth/me/avatar}); this only saves them from starting with a blank one.

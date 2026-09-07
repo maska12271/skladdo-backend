@@ -100,13 +100,13 @@ public class AuthService {
             throw new BadRequestException("error.auth.passwordSetupPending");
         }
 
-        // A suspended company would otherwise fail authentication as a disabled account, which surfaces as
-        // a bare credentials error and sends the user hunting for a password that is not the problem. The
-        // operator is exempt for the same reason as CustomUserDetails.isEnabled(): they must still be able
-        // to reach the panel that lifts the suspension.
-        if (account.getCompany() != null && !account.getCompany().isActive() && !account.isPlatformAdmin()) {
-            throw new BadRequestException("error.auth.companySuspended");
+        // An account with no password of its own cannot fail this any way but confusingly: its placeholder
+        // hash guarantees "wrong password", for a password they were never asked to choose.
+        if (account.usesExternalIdentity()) {
+            throw new BadRequestException("error.auth.useGoogleSignIn");
         }
+
+        assertCompanyNotSuspended(account);
 
         Authentication authentication;
         try {
@@ -128,6 +128,21 @@ public class AuthService {
         // session, and doing this there would make going home impossible.
         LoginResponse partner = firstClientSession(account);
         return partner != null ? partner : issueSession(userDetails.getId());
+    }
+
+    /**
+     * Refuses a sign-in into a suspended company, whatever credential was presented - shared with the
+     * Google sign-in path so the two cannot drift apart on which companies may be entered.
+     *
+     * <p>Checked here rather than left to authentication, where a suspended company surfaces as a disabled
+     * account and so as a bare credentials error, sending the user hunting for a password that is not the
+     * problem. The operator is exempt for the same reason as {@code CustomUserDetails.isEnabled()}: they
+     * must still be able to reach the panel that lifts the suspension.</p>
+     */
+    void assertCompanyNotSuspended(User account) {
+        if (account.getCompany() != null && !account.getCompany().isActive() && !account.isPlatformAdmin()) {
+            throw new BadRequestException("error.auth.companySuspended");
+        }
     }
 
     /**

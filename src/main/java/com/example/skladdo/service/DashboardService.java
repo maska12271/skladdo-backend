@@ -4,6 +4,7 @@ import com.example.skladdo.dto.DashboardStatsDto;
 import com.example.skladdo.dto.DashboardStatsDto.*;
 import com.example.skladdo.model.*;
 import com.example.skladdo.repository.*;
+import com.example.skladdo.security.CustomUserDetails;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +19,16 @@ import java.util.*;
  * Builds the {@link DashboardStatsDto} for the landing page. Every block is gated through
  * {@link PermissionService#canView}: a user only ever receives figures for the modules they are
  * allowed to see, so the same endpoint safely serves owners and narrowly-scoped staff alike.
+ *
+ * <p>Money is gated a second time, independently of the modules. Two flags decide it, and both are applied
+ * here rather than in the client, so what a browser never renders it also never receives:</p>
+ * <ul>
+ *     <li>{@code canSeePrices} - the account sees no monetary figure at all. Every amount below is nulled,
+ *     down to the per-order totals in the activity feed and a tender's estimated value.</li>
+ *     <li>{@code canSeeCompanyFinancials} - the account may see the figures on the records it works with,
+ *     but not the company's own performance: turnover, spend, cash collected, receivables and the top-N
+ *     tables ranked by money. Managers are exempt; for everyone else it defaults to closed.</li>
+ * </ul>
  *
  * <p>Read-only and transactional so lazy associations (order -> client/manufacturer, item -> product)
  * can be traversed with open-in-view disabled. Datasets are small (a single company's catalogue and
@@ -50,6 +61,7 @@ public class DashboardService {
     private final TenderRepository tenderRepository;
     private final ProductBatchRepository productBatchRepository;
     private final InvoiceRepository invoiceRepository;
+    private final UserRepository userRepository;
     private final PlanService planService;
 
     public DashboardService(PermissionService permissionService,
@@ -60,6 +72,7 @@ public class DashboardService {
                             TenderRepository tenderRepository,
                             ProductBatchRepository productBatchRepository,
                             InvoiceRepository invoiceRepository,
+                            UserRepository userRepository,
                             PlanService planService) {
         this.permissionService = permissionService;
         this.productRepository = productRepository;
@@ -69,6 +82,7 @@ public class DashboardService {
         this.tenderRepository = tenderRepository;
         this.productBatchRepository = productBatchRepository;
         this.invoiceRepository = invoiceRepository;
+        this.userRepository = userRepository;
         this.planService = planService;
     }
 
@@ -82,6 +96,9 @@ public class DashboardService {
         // handed tender counts and a tender widget on a dashboard whose Tenders page is gone.
         boolean canTenders = planService.hasAddon(AddonType.TENDERS) && permissionService.canView(auth, "TENDERS");
         boolean canInvoices = permissionService.canView(auth, "INVOICES");
+        MoneyAccess access = moneyAccess(auth);
+        boolean showPrices = access.prices();
+        boolean showFinancials = access.financials();
 
         YearMonth thisMonth = YearMonth.now();
         YearMonth lastMonth = thisMonth.minusMonths(1);
@@ -108,21 +125,27 @@ public class DashboardService {
             YearMonth ym = monthOf(o.getOrderDate());
             if (ym != null) spendByMonth.merge(ym, baseOf(o), BigDecimal::add);
         }
+        // Left empty rather than zero-filled when the company's figures are withheld: a twelve-month series
+        // of zeroes is not an empty chart, it is a chart claiming the company took nothing all year.
         List<MonthlyPoint> monthly = new ArrayList<>();
-        for (int i = MONTHS - 1; i >= 0; i--) {
-            YearMonth ym = thisMonth.minusMonths(i);
-            monthly.add(new MonthlyPoint(
-                    ym.toString(),
-                    revenueByMonth.getOrDefault(ym, BigDecimal.ZERO),
-                    spendByMonth.getOrDefault(ym, BigDecimal.ZERO)
-            ));
+        if (showFinancials) {
+            for (int i = MONTHS - 1; i >= 0; i--) {
+                YearMonth ym = thisMonth.minusMonths(i);
+                monthly.add(new MonthlyPoint(
+                        ym.toString(),
+                        revenueByMonth.getOrDefault(ym, BigDecimal.ZERO),
+                        spendByMonth.getOrDefault(ym, BigDecimal.ZERO)
+                ));
+            }
         }
 
         // ---- sales / purchase money blocks ------------------------------------------------------
+        // The block survives without its totals when financials are hidden: the active/total counts in it
+        // are what the operational KPI tiles are built from, and they are not money.
         Money sales = canSales ? money(salesOrders, SalesOrder::getOrderDate, DashboardService::baseOf,
-                o -> o.getStatus() != null ? o.getStatus().name() : null, thisMonth, lastMonth) : null;
+                o -> o.getStatus() != null ? o.getStatus().name() : null, thisMonth, lastMonth, showFinancials) : null;
         Money purchases = canPurchases ? money(purchaseOrders, PurchaseOrder::getOrderDate, DashboardService::baseOf,
-                o -> o.getStatus() != null ? o.getStatus().name() : null, thisMonth, lastMonth) : null;
+                o -> o.getStatus() != null ? o.getStatus().name() : null, thisMonth, lastMonth, showFinancials) : null;
 
         // ---- products block ---------------------------------------------------------------------
         ProductsBlock productsBlock = null;
@@ -174,9 +197,9 @@ public class DashboardService {
         TendersBlock tendersBlock = null;
         if (canTenders) {
             int activeTenders = (int) tenders.stream().filter(t -> isActive(t.getStatus())).count();
-            BigDecimal totalValue = tenders.stream()
+            BigDecimal totalValue = showPrices ? tenders.stream()
                     .map(DashboardService::baseOf)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+                    .reduce(BigDecimal.ZERO, BigDecimal::add) : null;
             // The widget is about what still needs working on, so closed and cancelled tenders are left
             // out entirely - newest first among the ones that are still running.
             List<TenderRow> active = tenders.stream()
@@ -188,27 +211,29 @@ public class DashboardService {
                             t.getTitle(),
                             t.getStatus(),
                             tenderCustomer(t),
-                            t.getEstimatedValue() != null ? baseOf(t) : null
+                            showPrices && t.getEstimatedValue() != null ? baseOf(t) : null
                     ))
                     .toList();
             tendersBlock = new TendersBlock(activeTenders, tenders.size(), totalValue, active);
         }
 
-        // ---- top clients (revenue this month) ---------------------------------------------------
-        List<RankRow> topClients = List.of();
+        // ---- top clients (this month; by turnover and by number of orders) ----------------------
+        RankBlock topClients = RankBlock.empty();
         if (canSales) {
             Map<Long, RankAccumulator> byClient = new HashMap<>();
             for (SalesOrder o : salesOrders) {
                 if (isCancelled(o.getStatus())) continue;
                 if (!inMonth(o.getOrderDate(), thisMonth) || o.getClient() == null) continue;
+                // Quantity is the order count here - a client buys orders, not units - which is what the
+                // widget ranks by when it is showing volume rather than money.
                 byClient.computeIfAbsent(o.getClient().getId(), k -> new RankAccumulator(o.getClient().getName()))
                         .add(baseOf(o), 1);
             }
-            topClients = rank(byClient);
+            topClients = rankBlock(byClient, showFinancials);
         }
 
-        // ---- top products (units sold this month) -----------------------------------------------
-        List<RankRow> topProducts = List.of();
+        // ---- top products (this month; by turnover and by units sold) ---------------------------
+        RankBlock topProducts = RankBlock.empty();
         if (canSales) {
             Map<Long, RankAccumulator> byProduct = new HashMap<>();
             for (SalesOrderItem item : salesOrderItemRepository.findBySalesOrder_OrderDateGreaterThanEqual(monthStart)) {
@@ -219,13 +244,13 @@ public class DashboardService {
                 byProduct.computeIfAbsent(p.getId(), k -> new RankAccumulator(p.getName()))
                         .add(baseOf(item.getLineTotal(), so), nz(item.getQuantity()));
             }
-            topProducts = rank(byProduct);
+            topProducts = rankBlock(byProduct, showFinancials);
         }
 
         // ---- top services (sold this month) ------------------------------------------------------
         // Its own ranking rather than a row in the products one: a service has no units in a warehouse,
         // so putting the two in one league table would rank "hours" against "boxes".
-        List<RankRow> topServices = List.of();
+        RankBlock topServices = RankBlock.empty();
         if (canSales) {
             Map<Long, RankAccumulator> byService = new HashMap<>();
             for (SalesOrderItem item : salesOrderItemRepository.findBySalesOrder_OrderDateGreaterThanEqual(monthStart)) {
@@ -236,7 +261,7 @@ public class DashboardService {
                 byService.computeIfAbsent(s.getId(), k -> new RankAccumulator(s.getName()))
                         .add(baseOf(item.getLineTotal(), so), nz(item.getQuantity()));
             }
-            topServices = rank(byService);
+            topServices = rankBlock(byService, showFinancials);
         }
 
         // ---- combined recent activity -----------------------------------------------------------
@@ -246,7 +271,7 @@ public class DashboardService {
                 activity.add(new ActivityItem("SALE", o.getId(),
                         o.getClient() != null ? o.getClient().getName() : o.getOrderNumber(),
                         o.getStatus() != null ? o.getStatus().name() : null,
-                        o.getOrderDate(), baseOf(o)));
+                        o.getOrderDate(), showPrices ? baseOf(o) : null));
             }
         }
         if (canPurchases) {
@@ -254,14 +279,14 @@ public class DashboardService {
                 activity.add(new ActivityItem("PURCHASE", o.getId(),
                         o.getManufacturer() != null ? o.getManufacturer().getName() : o.getOrderNumber(),
                         o.getStatus() != null ? o.getStatus().name() : null,
-                        o.getOrderDate(), baseOf(o)));
+                        o.getOrderDate(), showPrices ? baseOf(o) : null));
             }
         }
         if (canTenders) {
             for (Tender t : tenders) {
                 activity.add(new ActivityItem("TENDER", t.getId(), t.getTitle(), t.getStatus(),
                         t.getPublishedAt(),
-                        baseOf(t)));
+                        showPrices ? baseOf(t) : null));
             }
         }
         activity = activity.stream()
@@ -305,7 +330,9 @@ public class DashboardService {
         // ---- receivables (outstanding invoices) + collected (cash received) ---------------------
         Receivables receivables = null;
         Money collected = null;
-        if (canInvoices) {
+        // Unlike the order blocks there is nothing here but money - an invoice's whole contribution is an
+        // amount owed - so the gate drops both blocks outright rather than hollowing them out.
+        if (canInvoices && showFinancials) {
             List<Invoice> invoices = invoiceRepository.findAll();
             receivables = receivables(invoices, LocalDate.now());
             collected = collected(invoices, thisMonth, lastMonth);
@@ -415,11 +442,17 @@ public class DashboardService {
     // helpers
     // ---------------------------------------------------------------------------------------------
 
+    /**
+     * Month-on-month totals and the active/total counts for one order type. {@code withTotals} decides
+     * whether the caller is allowed the money half; the counts are computed either way, because the KPI
+     * tiles built from them ("12 active sales orders") are operational figures rather than financial ones.
+     */
     private <T> Money money(List<T> orders,
                             java.util.function.Function<T, LocalDate> dateOf,
                             java.util.function.Function<T, BigDecimal> amountOf,
                             java.util.function.Function<T, String> statusOf,
-                            YearMonth thisMonth, YearMonth lastMonth) {
+                            YearMonth thisMonth, YearMonth lastMonth,
+                            boolean withTotals) {
         BigDecimal thisTotal = BigDecimal.ZERO;
         BigDecimal lastTotal = BigDecimal.ZERO;
         int active = 0;
@@ -433,15 +466,75 @@ public class DashboardService {
             else if (inMonth(date, lastMonth)) lastTotal = lastTotal.add(amount);
             if (isActive(status)) active++;
         }
-        return new Money(thisTotal, lastTotal, active, orders.size());
+        return new Money(withTotals ? thisTotal : null, withTotals ? lastTotal : null, active, orders.size());
     }
 
-    private List<RankRow> rank(Map<Long, RankAccumulator> map) {
+    /**
+     * The same accumulators ranked both ways, so the widget's selector can switch between them without a
+     * round trip. When {@code withValue} is false the money ordering is not computed at all and the volume
+     * rows carry no amount - a per-client or per-product turnover is exactly the company figure the flag
+     * withholds, and shipping it unranked would hand it over just the same.
+     */
+    private RankBlock rankBlock(Map<Long, RankAccumulator> map, boolean withValue) {
+        List<RankRow> byVolume = rank(map, (a, b) -> Long.compare(b.getValue().quantity, a.getValue().quantity), withValue);
+        List<RankRow> byValue = withValue
+                ? rank(map, (a, b) -> b.getValue().amount.compareTo(a.getValue().amount), true)
+                : null;
+        return new RankBlock(byValue, byVolume);
+    }
+
+    private List<RankRow> rank(Map<Long, RankAccumulator> map,
+                               Comparator<Map.Entry<Long, RankAccumulator>> order,
+                               boolean withAmount) {
         return map.entrySet().stream()
-                .sorted((a, b) -> b.getValue().amount.compareTo(a.getValue().amount))
+                .sorted(order)
                 .limit(TOP_LIMIT)
-                .map(e -> new RankRow(e.getKey(), e.getValue().name, e.getValue().amount, e.getValue().quantity))
+                .map(e -> new RankRow(e.getKey(), e.getValue().name,
+                        withAmount ? e.getValue().amount : null, e.getValue().quantity))
                 .toList();
+    }
+
+    /**
+     * How much money this session is allowed to be told about.
+     *
+     * @param prices     every monetary figure, down to the total on a single order
+     * @param financials the company's own performance - turnover, spend, cash collected, receivables, and
+     *                   the top-N tables ranked by money
+     */
+    private record MoneyAccess(boolean prices, boolean financials) {
+        static final MoneyAccess NONE = new MoneyAccess(false, false);
+    }
+
+    /**
+     * Resolves both money gates in one account lookup.
+     *
+     * <p>A partner session is governed by the client's connection rather than by the visiting account's own
+     * flag - the same source {@link com.example.skladdo.security.PriceRedactionAdvice} redacts from - and
+     * never sees the host company's aggregates whatever it is allowed at home. Everyone else is governed by
+     * their account, where a null {@code canSeePrices} (a row predating that column) reads as yes and a null
+     * {@code canSeeCompanyFinancials} reads as no.</p>
+     */
+    private MoneyAccess moneyAccess(Authentication auth) {
+        if (auth == null || !(auth.getPrincipal() instanceof CustomUserDetails details)) {
+            return MoneyAccess.NONE;
+        }
+        if (details.isPartnerSession()) {
+            return new MoneyAccess(details.isPartnerCanSeePrices(), false);
+        }
+        // Neither flag is consulted for a manager, who is exempt from both - the same rule the client
+        // applies, stated here too so the two cannot disagree about an owner whose row happens to carry a
+        // stale false.
+        boolean manager = permissionService.isManager(auth);
+        return userRepository.findById(details.getId())
+                .map(u -> {
+                    boolean prices = manager || !Boolean.FALSE.equals(u.getCanSeePrices());
+                    // Price visibility outranks the second flag: there is no coherent dashboard that hides
+                    // every amount on a record and still reports what they add up to.
+                    boolean financials = prices
+                            && (manager || Boolean.TRUE.equals(u.getCanSeeCompanyFinancials()));
+                    return new MoneyAccess(prices, financials);
+                })
+                .orElse(MoneyAccess.NONE);
     }
 
     private static String tenderCustomer(Tender t) {

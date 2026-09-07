@@ -2,6 +2,7 @@ package com.example.skladdo.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
@@ -11,8 +12,12 @@ public record AcceptUserInviteRequest(
         @NotBlank String token,
         @NotBlank String fullName,
         @NotBlank @Email String email,
-        /** Optional - see {@code User.birthDate}. */
-        LocalDate birthDate,
+        /**
+         * Required here, though {@code User.birthDate} is nullable and stays that way: accounts created
+         * before this was asked for have no date, and backfilling one would mean inventing it. Requiring
+         * it at the point somebody fills the form in is what stops the gap growing.
+         */
+        @NotNull LocalDate birthDate,
         @NotBlank @Size(min = 8) String password,
         /**
          * An optional profile picture, as a {@code data:image/...;base64,...} URI.

@@ -18,6 +18,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     Optional<User> findByEmailIgnoreCase(String email);
 
+    /**
+     * The account an external identity is linked to - the first lookup every provider sign-in does, before
+     * falling back to the email address. The email is only consulted to establish the link the first time:
+     * an address can be changed or reassigned at the provider, while its {@code sub} cannot.
+     */
+    Optional<User> findByExternalAuthId(String externalAuthId);
+
     boolean existsByEmail(String email);
 
     /**

@@ -11,11 +11,14 @@ import java.util.List;
  *
  * @param role         the role the new account is created with; never {@link Role#OWNER}
  * @param canSeePrices price visibility, meaningful for the restricted roles only
+ * @param canSeeCompanyFinancials whether the account sees the company's aggregate money on its dashboard;
+ *                                meaningful for the restricted roles only
  * @param permissions  per-module overrides, or {@code null}/empty to use the company's default template
  */
 public record CreateUserInviteRequest(
         @NotNull Role role,
         Boolean canSeePrices,
+        Boolean canSeeCompanyFinancials,
         List<ModulePermissionDto> permissions
 ) {
 }

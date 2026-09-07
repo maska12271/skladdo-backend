@@ -55,6 +55,15 @@ public class UserInvite {
     private boolean canSeePrices = true;
 
     /**
+     * Company-wide financial visibility for the restricted roles - see {@code User.canSeeCompanyFinancials}.
+     *
+     * <p>Nullable, unlike {@link #canSeePrices} above, because that column existed from this table's first
+     * migration while this one is added to a table that already has rows: {@code ddl-auto=update} cannot
+     * add a {@code NOT NULL} column to them. {@code null} reads as "may not", which is also the default.</p>
+     */
+    private Boolean canSeeCompanyFinancials = false;
+
+    /**
      * The per-module access to grant, encoded by {@code UserInviteService}, or {@code null} to fall back
      * to the company's own default template (which is what an administrator who did not touch the
      * permission editor means).

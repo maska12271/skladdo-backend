@@ -16,9 +16,9 @@ public record DashboardStatsDto(
         ProductsBlock products,
         TendersBlock tenders,
         List<MonthlyPoint> monthly,
-        List<RankRow> topClients,
-        List<RankRow> topProducts,
-        List<RankRow> topServices,
+        RankBlock topClients,
+        RankBlock topProducts,
+        RankBlock topServices,
         List<ActivityItem> activity,
         Fulfilment fulfilment,
         ExpiryBlock expiry,
@@ -161,6 +161,28 @@ public record DashboardStatsDto(
             BigDecimal revenue,
             BigDecimal spend
     ) {
+    }
+
+    /**
+     * One top-N ranking, ordered both ways at once: {@code byValue} is the league table by turnover and
+     * {@code byVolume} the same accumulators by units sold (or, for clients, by number of orders).
+     *
+     * <p>Both are computed and shipped together because they are genuinely different tables - the client
+     * who spent the most is not usually the one who ordered most often - so re-sorting the five rows of one
+     * on the client would quietly show the wrong five. Two sorts over a map already in memory cost nothing,
+     * and sending both is what lets the widget's selector switch instantly instead of refetching.
+     *
+     * <p>{@code byValue} is {@code null} for a caller who may not see the company's money; {@code byVolume}
+     * is always present, with {@code amount} nulled on its rows in that case.</p>
+     */
+    public record RankBlock(
+            List<RankRow> byValue,
+            List<RankRow> byVolume
+    ) {
+        /** Nothing to rank - the caller cannot view the sales the tables are built from. */
+        public static RankBlock empty() {
+            return new RankBlock(List.of(), List.of());
+        }
     }
 
     public record RankRow(

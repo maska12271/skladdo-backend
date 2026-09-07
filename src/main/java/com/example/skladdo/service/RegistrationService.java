@@ -4,6 +4,7 @@ import com.example.skladdo.dto.LoginResponse;
 import com.example.skladdo.dto.RegisterRequest;
 import com.example.skladdo.exception.BadRequestException;
 import com.example.skladdo.model.AddonType;
+import com.example.skladdo.model.AuthProvider;
 import com.example.skladdo.model.Company;
 import com.example.skladdo.model.CompanyType;
 import com.example.skladdo.model.InviteLink;
@@ -60,6 +61,19 @@ public class RegistrationService {
 
     /** Creates the company + owner on the chosen plan and returns a signed-in session. */
     public LoginResponse register(RegisterRequest request) {
+        return register(request, AuthProvider.LOCAL, null);
+    }
+
+    /**
+     * As {@link #register(RegisterRequest)}, but for an owner who proved who they are with an identity
+     * provider instead of choosing a password. Everything that decides what the company gets - the invite
+     * link's terms, the plan, the add-ons, the account type - is the same code either way; only the
+     * credential on the owner's row differs, which is the whole of what signing up with Google changes.
+     *
+     * @param provider       the owner's credential. {@link AuthProvider#LOCAL} for an ordinary signup.
+     * @param externalAuthId the provider's permanent id for them, or {@code null} for a local signup.
+     */
+    public LoginResponse register(RegisterRequest request, AuthProvider provider, String externalAuthId) {
         // An invite link's terms come from the stored row, never from the request - see RegisterRequest.
         // A code that was sent but has since been revoked, expired or used up is refused outright rather
         // than quietly downgraded to an ordinary paid signup: someone who followed an invitation was
@@ -125,6 +139,11 @@ public class RegistrationService {
         owner.setFullName(request.fullName().trim());
         owner.setPasswordHash(passwordEncoder.encode(request.password()));
         owner.setPasswordSetupPending(false); // they set it here, so login is not blocked
+        // A provider signup has no password of its own: the caller passed a random one to satisfy the NOT
+        // NULL column (the same trick an invited account uses), and this is what marks it unusable so the
+        // password login path says "use the Google button" instead of "wrong password".
+        owner.setAuthProvider(provider);
+        owner.setExternalAuthId(externalAuthId);
         owner.setRole(Role.OWNER);
         owner.setCompany(company);
         owner.setActive(true);

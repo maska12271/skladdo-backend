@@ -457,7 +457,12 @@ public class PermissionService {
         return row;
     }
 
-    private boolean isManager(Authentication authentication) {
+    /**
+     * Whether the caller bypasses per-module checks entirely - an owner or an administrator. Public
+     * because access is not the only thing a manager role decides: {@code DashboardService} consults it to
+     * know whose company-financials flag is worth reading (a manager's never is).
+     */
+    public boolean isManager(Authentication authentication) {
         if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails details) {
             return isManagerRole(details.getRole());
         }

@@ -74,6 +74,15 @@
 			<version>0.12.6</version>
 			<scope>runtime</scope>
 		</dependency>
+		<!-- Verifies the ID token a "Sign in with Google" button hands us: NimbusJwtDecoder fetches and
+		     caches Google's JWKS and checks the signature, expiry, issuer and audience. Deliberately not
+		     Google's own google-api-client, which would drag Jackson 2 back onto a Boot 4 classpath that
+		     has moved to Jackson 3. Version is managed by the Boot parent. This is a plain library, not a
+		     starter - it adds no autoconfiguration and does not touch SecurityConfig's filter chain. -->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-oauth2-jose</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.springdoc</groupId>
 			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
