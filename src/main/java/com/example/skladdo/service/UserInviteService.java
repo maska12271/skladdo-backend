@@ -11,6 +11,7 @@ import com.example.skladdo.exception.BadRequestException;
 import com.example.skladdo.exception.ForbiddenException;
 import com.example.skladdo.exception.ResourceNotFoundException;
 import com.example.skladdo.model.AuditAction;
+import com.example.skladdo.model.AuthProvider;
 import com.example.skladdo.model.Company;
 import com.example.skladdo.model.NotificationType;
 import com.example.skladdo.model.PermissionModule;
@@ -20,6 +21,7 @@ import com.example.skladdo.model.UserInvite;
 import com.example.skladdo.repository.CompanyRepository;
 import com.example.skladdo.repository.UserInviteRepository;
 import com.example.skladdo.repository.UserRepository;
+import com.example.skladdo.security.ExternalIdentity;
 import com.example.skladdo.security.SecurityUtil;
 import com.example.skladdo.security.TenantContext;
 import org.slf4j.Logger;
@@ -142,6 +144,9 @@ public class UserInviteService {
         invite.setRole(request.role());
         // Managers always see prices, so the flag only means anything on the restricted roles.
         invite.setCanSeePrices(!restricted || !Boolean.FALSE.equals(request.canSeePrices()));
+        // Same "managers always may" rule, but the restricted default is the other way round: company
+        // turnover has to be granted, not merely left ungranted. See User.canSeeCompanyFinancials.
+        invite.setCanSeeCompanyFinancials(!restricted || Boolean.TRUE.equals(request.canSeeCompanyFinancials()));
         invite.setPermissions(encodePermissions(restricted ? request.permissions() : null));
         invite.setExpiresAt(Instant.now().plus(expiryHours, ChronoUnit.HOURS));
         invite.setCreatedAt(Instant.now());
@@ -232,15 +237,56 @@ public class UserInviteService {
      * @return the name of the company just joined, for the confirmation the page shows
      */
     public String accept(AcceptUserInviteRequest request) {
-        UserInvite invite = inviteRepository.findByToken(request.token())
-                .filter(i -> i.isRedeemable(Instant.now()))
-                .orElseThrow(() -> new BadRequestException("error.userInvite.notUsable"));
+        UserInvite invite = requireRedeemable(request.token());
 
         // The tenant must be bound before anything company-scoped opens a session - see the class note.
-        return TenantContext.callAs(invite.getCompanyId(), () -> createAccountFor(invite, request));
+        return TenantContext.callAs(invite.getCompanyId(),
+                () -> createAccountFor(invite, request, AuthProvider.LOCAL, null));
     }
 
-    private String createAccountFor(UserInvite invite, AcceptUserInviteRequest request) {
+    /**
+     * The same redemption, for an invitee who proves who they are with Google instead of choosing a
+     * password. The invitation still decides everything that matters - the company, the role, the
+     * permissions - so this differs only in where the name and address come from and in the account
+     * having no password of its own.
+     *
+     * <p>The address is Google's verified one rather than anything typed here. An invitation is not a
+     * licence to create an account under someone else's address, and the ordinary path only gets away
+     * with asking because the link itself was sent to the person.</p>
+     */
+    public String acceptWithGoogle(String token, ExternalIdentity identity,
+                                   java.time.LocalDate birthDate, String avatarImage) {
+        UserInvite invite = requireRedeemable(token);
+
+        // Refused before the invitation is claimed, so a link is not burnt on an account that cannot be
+        // created: the unique index on external_auth_id would otherwise fail this as a server error.
+        if (userRepository.findByExternalAuthId(identity.subject()).isPresent()) {
+            throw new BadRequestException("error.register.googleAccountTaken");
+        }
+
+        AcceptUserInviteRequest delegate = new AcceptUserInviteRequest(
+                token,
+                identity.displayName(),
+                identity.email(),
+                birthDate,
+                // Satisfies the NOT NULL password column with something nobody can present; AuthProvider
+                // .GOOGLE below is what makes the account unreachable by password rather than merely
+                // unguessable. Same trick the admin-created account uses.
+                java.util.UUID.randomUUID().toString(),
+                avatarImage);
+
+        return TenantContext.callAs(invite.getCompanyId(),
+                () -> createAccountFor(invite, delegate, AuthProvider.GOOGLE, identity.subject()));
+    }
+
+    private UserInvite requireRedeemable(String token) {
+        return inviteRepository.findByToken(token)
+                .filter(i -> i.isRedeemable(Instant.now()))
+                .orElseThrow(() -> new BadRequestException("error.userInvite.notUsable"));
+    }
+
+    private String createAccountFor(UserInvite invite, AcceptUserInviteRequest request,
+                                    AuthProvider provider, String externalAuthId) {
         // Lowercased like every other account: sign-in and password reset match case-insensitively, so
         // two rows differing only by case would be two accounts nobody could tell apart.
         String email = request.email().trim().toLowerCase(Locale.ROOT);
@@ -260,10 +306,13 @@ public class UserInviteService {
         user.setBirthDate(request.birthDate());
         user.setRole(invite.getRole());
         user.setCanSeePrices(invite.isCanSeePrices());
+        user.setCanSeeCompanyFinancials(Boolean.TRUE.equals(invite.getCanSeeCompanyFinancials()));
         // Unlike the admin-creates-the-account flow there is no pending state to sit in: the password
         // arrives in the same request that creates the row, so the account works immediately.
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setPasswordSetupPending(false);
+        user.setAuthProvider(provider);
+        user.setExternalAuthId(externalAuthId);
         user.setCompany(company);
         user.setActive(true);
         user.setArchived(false);

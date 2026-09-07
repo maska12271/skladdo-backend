@@ -33,6 +33,13 @@ public record UserDto(
         Long companyId,
         String companyName,
         Boolean canSeePrices,
+        /**
+         * Whether this account may see the company's aggregate money on its dashboard - turnover, spend,
+         * cash collected, receivables, and the option to rank the top-N widgets by money. Governed for the
+         * restricted roles only: a manager always may, and {@code canSeePrices = false} overrides it, since
+         * an account that sees no money at all cannot see the company's either.
+         */
+        Boolean canSeeCompanyFinancials,
         Boolean active,
         Boolean archived,
         Boolean passwordSetupPending,
@@ -96,7 +103,8 @@ public record UserDto(
      * {@code AuthService.addonsOf}.</p>
      */
     public UserDto withAddons(Set<AddonType> addons) {
-        return new UserDto(id, email, fullName, role, companyId, companyName, canSeePrices, active,
+        return new UserDto(id, email, fullName, role, companyId, companyName, canSeePrices,
+                canSeeCompanyFinancials, active,
                 archived, passwordSetupPending, emailSignature, language, permissions, warehouseIds,
                 homeCompanyId, homeCompanyName, partnerSession, homeRole, companyType, platformAdmin,
                 avatarKey, avatarIcon, avatarColor, lastLoginAt, birthDate, addons);
@@ -119,6 +127,7 @@ public record UserDto(
                 company != null ? company.getId() : null,
                 company != null ? company.getName() : null,
                 user.getCanSeePrices(),
+                user.getCanSeeCompanyFinancials(),
                 user.getActive(),
                 user.getArchived(),
                 user.getPasswordSetupPending(),
@@ -169,6 +178,9 @@ public record UserDto(
                 activeCompany.getId(),
                 activeCompany.getName(),
                 canSeePrices,
+                // Someone else's company, so its aggregate money is never this session's to see - whatever
+                // the account is allowed at home. The partner dashboard carries no money figures at all.
+                false,
                 user.getActive(),
                 user.getArchived(),
                 user.getPasswordSetupPending(),

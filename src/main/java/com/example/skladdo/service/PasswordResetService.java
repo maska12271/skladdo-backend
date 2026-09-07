@@ -3,6 +3,7 @@ package com.example.skladdo.service;
 import com.example.skladdo.dto.PasswordResetInfoResponse;
 import com.example.skladdo.dto.SetupLinkResponse;
 import com.example.skladdo.exception.BadRequestException;
+import com.example.skladdo.model.AuthProvider;
 import com.example.skladdo.model.PasswordResetToken;
 import com.example.skladdo.model.User;
 import com.example.skladdo.repository.PasswordResetTokenRepository;
@@ -148,6 +149,11 @@ public class PasswordResetService {
         user.setPasswordHash(passwordEncoder.encode(rawPassword));
         user.setPasswordSetupPending(false);
         user.setActive(true);
+        // An account that signed up through Google now has a password of its own, so it is an ordinary
+        // local account again - otherwise the password it just set would be refused at the login form,
+        // which checks this flag before ever hashing anything. Any linked identity is left in place: this
+        // adds a way in, it does not take one away.
+        user.setAuthProvider(AuthProvider.LOCAL);
         userRepository.save(user);
 
         resetToken.setUsedAt(Instant.now());

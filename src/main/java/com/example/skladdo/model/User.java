@@ -56,6 +56,27 @@ public class User {
      */
     private Boolean canSeePrices = true;
 
+    /**
+     * Whether this account may see the company's <em>aggregate</em> money on the dashboard: revenue and
+     * spend for the month, cash collected, the revenue-vs-spend chart, outstanding receivables, and the
+     * option to rank the top-N widgets by turnover rather than by volume.
+     *
+     * <p>Distinct from {@link #canSeePrices}, and deliberately so. That flag is about the figures on the
+     * records a person works with - what a product costs, what an order came to - which someone selling or
+     * buying needs to do the job at all. This one is about how the business as a whole is doing, which is
+     * management information: a salesperson has every reason to see the total of the order they are
+     * writing and no particular reason to see the company's turnover. The two are set independently, but
+     * {@code canSeePrices = false} wins over both - an account that sees no money sees no money anywhere.
+     *
+     * <p>Managers ({@link Role#OWNER}, {@link Role#ADMINISTRATOR}) are never governed by this; it is
+     * consulted only for the restricted roles, and defaults to closed for them, so a new user starts on an
+     * operational dashboard and is opened up deliberately rather than by omission.
+     *
+     * <p>Left nullable so the column can be added to an existing {@code app_user} table under
+     * {@code ddl-auto=update}; a {@code null} value is treated as "may not", matching the default.</p>
+     */
+    private Boolean canSeeCompanyFinancials = false;
+
     private Boolean active = true;
 
     private Boolean archived = false;
@@ -71,6 +92,49 @@ public class User {
      * unchanged - same migration-friendly pattern as {@link #canSeePrices}.</p>
      */
     private Boolean passwordSetupPending = false;
+
+    /**
+     * Which credential this account signs in with - its own password, or an external identity provider.
+     * See {@link AuthProvider}, which explains why linking Google to a password account leaves this
+     * {@link AuthProvider#LOCAL}.
+     *
+     * <p>Nullable so the column adds cleanly under {@code ddl-auto=update}: every account that predates it
+     * reads back {@code null}, which {@link #getAuthProviderOrLocal()} treats as {@code LOCAL} - correct,
+     * since they all have real passwords - while new rows get {@code LOCAL} written explicitly. Same
+     * migration-friendly pattern as {@link #canSeePrices}.</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private AuthProvider authProvider = AuthProvider.LOCAL;
+
+    /**
+     * The identity provider's own permanent id for this person (the OIDC {@code sub} claim), or
+     * {@code null} for an account with no external identity linked.
+     *
+     * <p>This, not the email address, is what an external sign-in matches on first: an address can be
+     * changed or reassigned at the provider, while {@code sub} is stable for the life of the account. The
+     * email is only consulted to link an identity the first time, and matching on it alone would let a
+     * reassigned address inherit someone else's Skladdo account.</p>
+     *
+     * <p>Unique so one Google account cannot end up attached to two logins. Nullable, so this costs
+     * nothing on the existing rows - Postgres does not consider two nulls equal.</p>
+     */
+    @Column(length = 255, unique = true)
+    private String externalAuthId;
+
+    /** This account's provider, reading a {@code null} from before the column existed as LOCAL. */
+    public AuthProvider getAuthProviderOrLocal() {
+        return authProvider == null ? AuthProvider.LOCAL : authProvider;
+    }
+
+    /**
+     * True when this account has no password of its own and can only sign in through its provider. What
+     * the password login path checks in order to say "use the Google button" rather than "wrong password",
+     * which is what its placeholder hash would otherwise produce.
+     */
+    public boolean usesExternalIdentity() {
+        return getAuthProviderOrLocal() != AuthProvider.LOCAL;
+    }
 
     /**
      * Personal HTML email signature, appended to every manufacturer email this user sends. Optional and
