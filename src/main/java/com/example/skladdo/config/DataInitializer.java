@@ -836,7 +836,10 @@ public class DataInitializer implements CommandLineRunner {
         settings.setPenaltyPeriod(PenaltyPeriod.DAILY);
         settings.setDefaultPrepaymentPercent(new BigDecimal("30"));
         // Seller details so a generated demo invoice looks complete.
-        settings.setCompanyAddress("Pärnu mnt 12, 10148 Tallinn, Estonia");
+        settings.setCompanyAddressStreet("Pärnu mnt 12");
+        settings.setCompanyAddressCity("Tallinn");
+        settings.setCompanyAddressPostalCode("10148");
+        settings.setCompanyCountry("Estonia");
         settings.setCompanyEmail("billing@nordictrade.ee");
         settings.setCompanyPhone("+372 600 1234");
         settings.setVatNumber("EE101234567");
@@ -968,7 +971,9 @@ public class DataInitializer implements CommandLineRunner {
             String slug = "client" + idx;
             client.setEmail("info@" + slug + ".example");
             client.setPhone("+372 " + (5000000 + RANDOM.nextInt(2999999)));
-            client.setAddress(RANDOM.nextInt(120) + " Tööstuse tee, Tallinn");
+            client.setAddressStreet("Tööstuse tee " + (1 + RANDOM.nextInt(120)));
+            client.setAddressCity("Tallinn");
+            client.setAddressPostalCode(String.valueOf(10100 + RANDOM.nextInt(500)));
             client.setActive(true);
             list.add(client);
         }

@@ -173,7 +173,10 @@ class InvoicePdfServiceRenderTest {
         settings.setInvoiceNumberPrefix("INV-");
         settings.setInvoicePaymentTermDays(14);
         settings.setLatePaymentPenaltyPercent(new BigDecimal("0.500"));
-        settings.setCompanyAddress("5 Kalamaja, 10415 Tallinn, Estonia");
+        settings.setCompanyAddressStreet("5 Kalamaja");
+        settings.setCompanyAddressCity("Tallinn");
+        settings.setCompanyAddressPostalCode("10415");
+        settings.setCompanyCountry("Estonia");
         settings.setVatNumber("EE101010101");
         settings.setCompanyEmail("hello@skladdo.example");
         settings.setCompanyPhone("+372 555 0100");

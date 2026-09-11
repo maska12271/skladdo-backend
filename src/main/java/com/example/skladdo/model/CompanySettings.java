@@ -198,8 +198,20 @@ public class CompanySettings {
     // rather than on Company because this is the row already edited through /api/settings, and Company
     // currently has no write endpoint.
 
-    /** Company postal address shown in the invoice's "from" block. */
-    private String companyAddress;
+    // Address in parts, for the same reason as on Client: the e-invoice needs the street and city as a
+    // mandatory pair. The old single-line `companyAddress` column was split into these and dropped.
+
+    /** Street, house and apartment - the e-invoice's {@code PostalAddress1}. */
+    private String companyAddressStreet;
+
+    /** City or county - the e-invoice's {@code City}. */
+    private String companyAddressCity;
+
+    @Column(length = 10)
+    private String companyAddressPostalCode;
+
+    /** Country name for the seller's address block. */
+    private String companyCountry;
 
     /** Company contact email shown on the invoice. */
     private String companyEmail;
@@ -371,4 +383,13 @@ public class CompanySettings {
 
     @LastModifiedBy
     private Long updatedById;
+
+    /**
+     * The seller's address parts as one printable line, replacing the free-text {@code companyAddress}
+     * column. Kept under the old name so the invoice PDF templates go on reading
+     * {@code settings.companyAddress} unchanged. Read-only - writers send the parts.
+     */
+    public String getCompanyAddress() {
+        return PostalAddress.compose(companyAddressStreet, companyAddressPostalCode, companyAddressCity);
+    }
 }

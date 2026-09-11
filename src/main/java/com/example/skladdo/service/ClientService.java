@@ -103,10 +103,14 @@ public class ClientService {
         Client client = findById(id);
         client.setName(updatedClient.getName());
         client.setRegistrationCode(blankToNull(updatedClient.getRegistrationCode()));
+        client.setVatNumber(updatedClient.getVatNumber());
+        client.setInvoiceDepartmentId(updatedClient.getInvoiceDepartmentId());
         client.setEmail(updatedClient.getEmail());
         client.setPhone(updatedClient.getPhone());
         client.setCountry(updatedClient.getCountry());
-        client.setAddress(updatedClient.getAddress());
+        client.setAddressStreet(updatedClient.getAddressStreet());
+        client.setAddressCity(updatedClient.getAddressCity());
+        client.setAddressPostalCode(updatedClient.getAddressPostalCode());
         client.setNotes(updatedClient.getNotes());
         client.setActive(updatedClient.getActive());
         Client saved = clientRepository.save(client);

@@ -1,7 +1,9 @@
 package com.example.skladdo.service;
 
 import com.example.skladdo.dto.CompanySettingsDto;
+import com.example.skladdo.dto.CreateCreditNoteRequest;
 import com.example.skladdo.dto.CreateInvoiceRequest;
+import com.example.skladdo.dto.EInvoiceIssueDto;
 import com.example.skladdo.dto.InvoiceDetailsDto;
 import com.example.skladdo.dto.InvoiceSummaryDto;
 import com.example.skladdo.dto.OrderPaymentSummaryDto;
@@ -42,17 +44,23 @@ public class InvoiceService {
     private final CompanyRepository companyRepository;
     private final CompanySettingsService settingsService;
     private final InvoicePdfService pdfService;
+    private final EInvoiceXmlService eInvoiceXmlService;
+    private final EInvoiceReadinessService eInvoiceReadinessService;
 
     public InvoiceService(InvoiceRepository invoiceRepository,
                           SalesOrderRepository salesOrderRepository,
                           CompanyRepository companyRepository,
                           CompanySettingsService settingsService,
-                          InvoicePdfService pdfService) {
+                          InvoicePdfService pdfService,
+                          EInvoiceXmlService eInvoiceXmlService,
+                          EInvoiceReadinessService eInvoiceReadinessService) {
+        this.eInvoiceReadinessService = eInvoiceReadinessService;
         this.invoiceRepository = invoiceRepository;
         this.salesOrderRepository = salesOrderRepository;
         this.companyRepository = companyRepository;
         this.settingsService = settingsService;
         this.pdfService = pdfService;
+        this.eInvoiceXmlService = eInvoiceXmlService;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -78,8 +86,8 @@ public class InvoiceService {
 
         InvoiceType type = req.type() != null ? req.type() : InvoiceType.FINAL;
 
-        // Active (non-void) invoices already on the order; effective type coalesces legacy nulls to FINAL.
-        List<Invoice> active = invoiceRepository.findBySalesOrderIdAndStatusNot(salesOrderId, InvoicePaymentStatus.VOID);
+        // Invoices still standing on the order; effective type coalesces legacy nulls to FINAL.
+        List<Invoice> active = liveInvoices(salesOrderId);
         if (active.stream().anyMatch(i -> i.getType() == type)) {
             throw new BadRequestException(type == InvoiceType.PREPAYMENT
                     ? "error.invoice.activePrepaymentExists"
@@ -120,8 +128,15 @@ public class InvoiceService {
         if (client != null) {
             invoice.setClient(client);
             invoice.setClientName(client.getName());
+            // Both shapes: the composed line is what the PDF prints, the parts are what the e-invoice needs.
             invoice.setClientAddress(client.getAddress());
+            invoice.setClientAddressStreet(client.getAddressStreet());
+            invoice.setClientAddressCity(client.getAddressCity());
+            invoice.setClientAddressPostalCode(client.getAddressPostalCode());
+            invoice.setClientCountry(client.getCountry());
             invoice.setClientRegistrationCode(client.getRegistrationCode());
+            invoice.setClientVatNumber(client.getVatNumber());
+            invoice.setClientDepartmentId(client.getInvoiceDepartmentId());
             invoice.setClientEmail(client.getEmail());
         }
 
@@ -308,6 +323,38 @@ public class InvoiceService {
         return pdfService.render(invoice, company, settings);
     }
 
+    /**
+     * Builds the Estonian e-invoice XML for this invoice, from the same snapshotted data the PDF is
+     * rendered from. Not read-only for the same reason as {@link #getPdf(Long)}.
+     *
+     * <p>A voided invoice is refused: the XML is a document the buyer's accounting system will import and
+     * book as payable, and a cancelled invoice must not be able to enter that pipeline at all.</p>
+     */
+    @Transactional
+    public byte[] getEInvoiceXml(Long id) {
+        Invoice invoice = require(id);
+        if (invoice.getStatus() == InvoicePaymentStatus.VOID) {
+            throw new BadRequestException("error.invoice.voidedNoEInvoice");
+        }
+        CompanySettings settings = settingsService.getOrCreate();
+        Company company = companyRepository.findById(currentCompanyId())
+                .orElseThrow(() -> new IllegalStateException("Current company not found"));
+        return eInvoiceXmlService.render(invoice, company, settings);
+    }
+
+    /**
+     * What this invoice is missing for a clean e-invoice export. Empty means it exports cleanly; the
+     * caller decides whether to go ahead anyway, since an incomplete file is still often useful.
+     */
+    @Transactional
+    public List<EInvoiceIssueDto> getEInvoiceReadiness(Long id) {
+        Invoice invoice = require(id);
+        CompanySettings settings = settingsService.getOrCreate();
+        Company company = companyRepository.findById(currentCompanyId())
+                .orElseThrow(() -> new IllegalStateException("Current company not found"));
+        return eInvoiceReadinessService.check(invoice, company, settings);
+    }
+
     /** The invoice number, for naming the downloaded file. */
     @Transactional(readOnly = true)
     public String getInvoiceNumber(Long id) {
@@ -361,6 +408,214 @@ public class InvoiceService {
         return toDetails(invoiceRepository.save(invoice), LocalDate.now());
     }
 
+    /**
+     * Issues a credit note (kreeditarve) reversing an already-sent invoice, and moves that invoice to
+     * {@link InvoicePaymentStatus#CREDITED}.
+     *
+     * <p>This is the correction path for an invoice the customer has already received. Voiding is the
+     * other one, and the difference is what the books end up saying: a voided invoice never counted,
+     * while a credited one was genuinely issued and is reversed by a second document that stays on
+     * record. Both free the order to be invoiced again.</p>
+     *
+     * <p>The credit note mirrors the original's amounts and lines as positive figures with nothing due -
+     * Estonian law does not recognise a negative invoice total, so the reversal is carried by the
+     * document's type rather than by its sign.</p>
+     */
+    @Transactional
+    public InvoiceDetailsDto createCreditNote(Long invoiceId, CreateCreditNoteRequest request) {
+        Invoice original = require(invoiceId);
+
+        if (original.getType() == InvoiceType.CREDIT) {
+            throw new BadRequestException("error.invoice.creditNoteNotCreditable");
+        }
+        if (original.getStatus() == InvoicePaymentStatus.VOID) {
+            throw new BadRequestException("error.invoice.voidedNoCreditNote");
+        }
+        BigDecimal remaining = nz(original.getTotalAmount()).subtract(nz(original.getCreditedAmount()));
+        if (remaining.signum() <= 0) {
+            throw new BadRequestException("error.invoice.alreadyCredited");
+        }
+        // Same rule as voiding: a deposit already netted into a live final invoice cannot be pulled out
+        // from under it, or that invoice's balance stops adding up.
+        if (original.getType() == InvoiceType.PREPAYMENT
+                && invoiceRepository.existsByAppliedPrepaymentInvoiceIdAndStatusNot(invoiceId, InvoicePaymentStatus.VOID)) {
+            throw new BadRequestException("error.invoice.prepaymentAppliedToFinal");
+        }
+
+        LocalDate issueDate = request.issueDate() != null ? request.issueDate() : LocalDate.now();
+
+        Invoice credit = new Invoice();
+        credit.setSalesOrder(original.getSalesOrder());
+        credit.setType(InvoiceType.CREDIT);
+        credit.setCreditedInvoice(original);
+        credit.setIssueDate(issueDate);
+        // Nothing is ever owed on a credit note, so it is settled the moment it is issued. Recording that
+        // as PAID is what keeps every roll-up correct without special-casing: they all read "not UNPAID"
+        // as "nothing more to collect". No due date, for the same reason.
+        credit.setStatus(InvoicePaymentStatus.PAID);
+        credit.setPaidDate(issueDate);
+        credit.setCurrency(original.getCurrency());
+
+        // Amounts and lines: a full credit mirrors the original exactly, a partial one is computed from
+        // what was actually selected. See buildFullCredit / buildPartialCredit for why they differ.
+        List<CreditedLine> credited = resolveCreditedLines(original, request);
+        boolean creditDelivery = request.creditDelivery() == null || request.creditDelivery();
+        if (isWholeInvoice(original, credited, creditDelivery)) {
+            buildFullCredit(credit, original);
+        } else {
+            buildPartialCredit(credit, original, credited, creditDelivery);
+        }
+        if (nz(credit.getTotalAmount()).signum() <= 0) {
+            throw new BadRequestException("error.invoice.creditNoteNoValue");
+        }
+        if (nz(credit.getTotalAmount()).compareTo(remaining) > 0) {
+            throw new BadRequestException("error.invoice.creditNoteExceedsRemaining");
+        }
+
+        // No late-payment terms apply to a document with no due date; the columns are NOT NULL.
+        credit.setPenaltyPercent(BigDecimal.ZERO);
+        credit.setPenaltyPeriod(original.getPenaltyPeriod() != null ? original.getPenaltyPeriod() : PenaltyPeriod.DAILY);
+
+        // Buyer snapshot is copied rather than re-read: the credit note must name the buyer exactly as the
+        // invoice it reverses did, even if the client record has changed since.
+        credit.setClient(original.getClient());
+        credit.setClientName(original.getClientName());
+        credit.setClientAddress(original.getClientAddress());
+        credit.setClientAddressStreet(original.getClientAddressStreet());
+        credit.setClientAddressCity(original.getClientAddressCity());
+        credit.setClientAddressPostalCode(original.getClientAddressPostalCode());
+        credit.setClientCountry(original.getClientCountry());
+        credit.setClientRegistrationCode(original.getClientRegistrationCode());
+        credit.setClientVatNumber(original.getClientVatNumber());
+        credit.setClientDepartmentId(original.getClientDepartmentId());
+        credit.setClientEmail(original.getClientEmail());
+
+        credit.setNotes(request.reason());
+        credit.setInvoiceNumber(settingsService.allocateNextInvoiceNumber());
+
+        BigDecimal creditedSoFar = nz(original.getCreditedAmount()).add(nz(credit.getTotalAmount()));
+        original.setCreditedAmount(creditedSoFar);
+        // Only a fully reversed invoice is CREDITED. A partial credit leaves the rest genuinely owed, so
+        // the invoice stays where it was and simply owes less.
+        if (creditedSoFar.compareTo(nz(original.getTotalAmount())) >= 0) {
+            original.setStatus(InvoicePaymentStatus.CREDITED);
+            // Nothing is owed any more, so a penalty frozen against it goes too.
+            original.setPenaltyAmountCharged(null);
+        }
+        invoiceRepository.save(original);
+
+        return toDetails(invoiceRepository.save(credit), LocalDate.now());
+    }
+
+    /**
+     * Copies the invoice wholesale. The original's own totals are reused rather than recomputed so a full
+     * credit reverses it to the cent - the order's tax was rounded per line, so adding the lines back up
+     * can land a penny away from what the invoice actually said.
+     */
+    private void buildFullCredit(Invoice credit, Invoice original) {
+        credit.setSubtotalAmount(nz(original.getSubtotalAmount()));
+        credit.setTaxAmount(nz(original.getTaxAmount()));
+        credit.setDeliveryPrice(nz(original.getDeliveryPrice()));
+        credit.setTotalAmount(nz(original.getTotalAmount()));
+        for (InvoiceItem item : original.getItems()) {
+            credit.getItems().add(copyLine(credit, item, item.getQuantity(), nz(item.getLineTotal())));
+        }
+    }
+
+    /**
+     * Builds a credit note for part of the invoice. Each selected line is credited pro rata - crediting
+     * two of five items reverses two fifths of that line's net, discount included - and the tax is then
+     * recomputed per line from the credited net, since there is no original figure to copy for a portion.
+     */
+    private void buildPartialCredit(Invoice credit, Invoice original, List<CreditedLine> credited,
+                                    boolean creditDelivery) {
+        BigDecimal subtotal = BigDecimal.ZERO;
+        BigDecimal tax = BigDecimal.ZERO;
+
+        for (CreditedLine selection : credited) {
+            InvoiceItem item = selection.item();
+            int originalQty = item.getQuantity() != null ? item.getQuantity() : 0;
+            BigDecimal net = originalQty > 0
+                    ? nz(item.getLineTotal())
+                        .multiply(BigDecimal.valueOf(selection.quantity()))
+                        .divide(BigDecimal.valueOf(originalQty), 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            subtotal = subtotal.add(net);
+            tax = tax.add(net.multiply(nz(item.getTaxRatePercent())).movePointLeft(2)
+                    .setScale(2, RoundingMode.HALF_UP));
+            credit.getItems().add(copyLine(credit, item, selection.quantity(), net));
+        }
+
+        BigDecimal delivery = creditDelivery ? nz(original.getDeliveryPrice()) : BigDecimal.ZERO;
+        credit.setSubtotalAmount(subtotal);
+        credit.setTaxAmount(tax);
+        credit.setDeliveryPrice(delivery);
+        credit.setTotalAmount(subtotal.add(tax).add(delivery));
+    }
+
+    private InvoiceItem copyLine(Invoice credit, InvoiceItem source, Integer quantity, BigDecimal lineTotal) {
+        InvoiceItem line = new InvoiceItem();
+        line.setInvoice(credit);
+        line.setProduct(source.getProduct());
+        line.setProductName(source.getProductName());
+        line.setSku(source.getSku());
+        line.setQuantity(quantity);
+        line.setUnitPrice(source.getUnitPrice());
+        line.setDiscountPercent(source.getDiscountPercent());
+        line.setTaxRatePercent(source.getTaxRatePercent());
+        line.setLineTotal(lineTotal);
+        return line;
+    }
+
+    /**
+     * Pairs each requested line with the invoice item it credits, rejecting anything that does not belong
+     * to this invoice or asks for more than was sold. An empty request means the whole invoice.
+     */
+    private List<CreditedLine> resolveCreditedLines(Invoice original, CreateCreditNoteRequest request) {
+        if (!request.isPartial()) {
+            return original.getItems().stream()
+                    .map(item -> new CreditedLine(item, item.getQuantity() != null ? item.getQuantity() : 0))
+                    .toList();
+        }
+        Map<Long, InvoiceItem> byId = new HashMap<>();
+        for (InvoiceItem item : original.getItems()) {
+            byId.put(item.getId(), item);
+        }
+        List<CreditedLine> resolved = new ArrayList<>();
+        for (CreateCreditNoteRequest.CreditLine line : request.lines()) {
+            InvoiceItem item = byId.get(line.invoiceItemId());
+            if (item == null) {
+                throw new BadRequestException("error.invoice.creditNoteUnknownLine");
+            }
+            int available = item.getQuantity() != null ? item.getQuantity() : 0;
+            if (line.quantity() > available) {
+                throw new BadRequestException("error.invoice.creditNoteQuantityTooHigh");
+            }
+            resolved.add(new CreditedLine(item, line.quantity()));
+        }
+        return resolved;
+    }
+
+    /**
+     * Whether the selection actually amounts to the entire invoice - every line at its full quantity, and
+     * the delivery charge with it. Decided here rather than trusted from the client, so a request that
+     * happens to name everything still gets the exact-mirror treatment.
+     */
+    private boolean isWholeInvoice(Invoice original, List<CreditedLine> credited, boolean creditDelivery) {
+        if (!creditDelivery && nz(original.getDeliveryPrice()).signum() > 0) {
+            return false;
+        }
+        if (credited.size() != original.getItems().size()) {
+            return false;
+        }
+        return credited.stream().allMatch(c ->
+                c.quantity() == (c.item().getQuantity() != null ? c.item().getQuantity() : 0));
+    }
+
+    /** One of the original's lines together with how much of it is being credited. */
+    private record CreditedLine(InvoiceItem item, int quantity) {
+    }
+
     @Transactional
     public InvoiceDetailsDto voidInvoice(Long id) {
         Invoice invoice = require(id);
@@ -368,6 +623,18 @@ public class InvoiceService {
         if (invoice.getType() == InvoiceType.PREPAYMENT
                 && invoiceRepository.existsByAppliedPrepaymentInvoiceIdAndStatusNot(id, InvoicePaymentStatus.VOID)) {
             throw new BadRequestException("error.invoice.prepaymentAppliedToFinal");
+        }
+        // Voiding a credit note gives back what it reversed, which would otherwise stay written off by a
+        // document that no longer counts - owed by nobody and settled by nothing.
+        Invoice credited = invoice.getCreditedInvoice();
+        if (invoice.getType() == InvoiceType.CREDIT && credited != null
+                && invoice.getStatus() != InvoicePaymentStatus.VOID) {
+            BigDecimal remaining = nz(credited.getCreditedAmount()).subtract(nz(invoice.getTotalAmount()));
+            credited.setCreditedAmount(remaining.max(BigDecimal.ZERO));
+            if (credited.getStatus() == InvoicePaymentStatus.CREDITED) {
+                credited.setStatus(InvoicePaymentStatus.UNPAID);
+            }
+            invoiceRepository.save(credited);
         }
         invoice.setStatus(InvoicePaymentStatus.VOID);
         invoice.setPaidDate(null);
@@ -398,11 +665,13 @@ public class InvoiceService {
 
     /** Derives one order's {@link OrderPaymentStatus} and amount due from its invoices (see enum precedence). */
     private OrderPaymentSummaryDto summarise(Long orderId, List<Invoice> invoices, LocalDate today) {
+        // Reversed invoices and the credit notes that reversed them are both out: nothing is owed on
+        // either, and an order whose only invoice has been credited is back to needing one.
         Invoice fin = invoices.stream()
-                .filter(i -> i.getStatus() != InvoicePaymentStatus.VOID && i.getType() == InvoiceType.FINAL)
+                .filter(InvoiceService::isLive).filter(i -> i.getType() == InvoiceType.FINAL)
                 .findFirst().orElse(null);
         Invoice pre = invoices.stream()
-                .filter(i -> i.getStatus() != InvoicePaymentStatus.VOID && i.getType() == InvoiceType.PREPAYMENT)
+                .filter(InvoiceService::isLive).filter(i -> i.getType() == InvoiceType.PREPAYMENT)
                 .findFirst().orElse(null);
 
         Invoice governing = fin != null ? fin : pre;
@@ -456,6 +725,27 @@ public class InvoiceService {
                 .orElseThrow(() -> new ResourceNotFoundException("Invoice not found with id: " + id));
     }
 
+    /**
+     * The invoices on an order that still stand: neither voided nor reversed by a credit note, and not
+     * credit notes themselves.
+     *
+     * <p>This is what "does the order already have one of these?" and "is there a deposit to net off?"
+     * both mean. Crediting therefore frees the order to be invoiced again exactly as voiding does - the
+     * difference between them is what the books keep, not what the order can do next.</p>
+     */
+    private List<Invoice> liveInvoices(Long salesOrderId) {
+        return invoiceRepository.findBySalesOrderIdAndStatusNot(salesOrderId, InvoicePaymentStatus.VOID).stream()
+                .filter(InvoiceService::isLive)
+                .toList();
+    }
+
+    /** See {@link #liveInvoices}: a standing, payable-in-principle document rather than a reversal. */
+    private static boolean isLive(Invoice invoice) {
+        return invoice.getStatus() != InvoicePaymentStatus.VOID
+                && invoice.getStatus() != InvoicePaymentStatus.CREDITED
+                && invoice.getType() != InvoiceType.CREDIT;
+    }
+
     private Long currentCompanyId() {
         Long companyId = TenantContext.getCompanyId();
         if (companyId == null) {
@@ -486,9 +776,16 @@ public class InvoiceService {
         return BigDecimal.ZERO;
     }
 
-    /** Outstanding principal the penalty accrues on: the total less any prepayment already applied. */
+    /**
+     * Outstanding principal the penalty accrues on: the total less any prepayment already applied and
+     * anything reversed by a credit note. Never negative - crediting an invoice reduces what is owed to
+     * zero at the very most, it does not turn it into a debt owed back.
+     */
     private BigDecimal principal(Invoice invoice) {
-        return nz(invoice.getTotalAmount()).subtract(nz(invoice.getAppliedPrepaymentAmount()));
+        BigDecimal owed = nz(invoice.getTotalAmount())
+                .subtract(nz(invoice.getAppliedPrepaymentAmount()))
+                .subtract(nz(invoice.getCreditedAmount()));
+        return owed.max(BigDecimal.ZERO);
     }
 
     private InvoiceSummaryDto toSummary(Invoice invoice, LocalDate today) {
@@ -518,6 +815,7 @@ public class InvoiceService {
         List<InvoiceDetailsDto.Line> lines = new ArrayList<>();
         for (InvoiceItem item : invoice.getItems()) {
             lines.add(new InvoiceDetailsDto.Line(
+                    item.getId(),
                     item.getProduct() != null ? item.getProduct().getId() : null,
                     item.getProductName(),
                     item.getSku(),
@@ -557,6 +855,9 @@ public class InvoiceService {
                 invoice.getAppliedPrepaymentAmount(),
                 invoice.getAppliedPrepaymentInvoice() != null
                         ? invoice.getAppliedPrepaymentInvoice().getInvoiceNumber() : null,
+                invoice.getCreditedInvoice() != null
+                        ? invoice.getCreditedInvoice().getInvoiceNumber() : null,
+                nz(invoice.getCreditedAmount()),
                 invoice.getNotes(),
                 lines,
                 invoice.getCreatedAt(),

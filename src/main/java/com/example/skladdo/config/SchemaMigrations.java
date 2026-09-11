@@ -1,6 +1,8 @@
 package com.example.skladdo.config;
 
 import com.example.skladdo.model.EmailRecipientType;
+import com.example.skladdo.model.InvoicePaymentStatus;
+import com.example.skladdo.model.InvoiceType;
 import com.example.skladdo.model.NotificationType;
 import com.example.skladdo.model.PermissionModule;
 import com.example.skladdo.model.PlanType;
@@ -104,6 +106,16 @@ public class SchemaMigrations implements CommandLineRunner {
         migrateClientContactPersons();
         dropColumn("CLIENT", "CONTACT_PERSON");
 
+        // A single free-text address line became street / city / postal code columns, because the Estonian
+        // e-invoice schema needs the street and the city as a mandatory pair and one line cannot be split
+        // back apart reliably. The existing lines are divided here, on the last comma, before the old
+        // column goes - otherwise every address on record would be lost.
+        splitSingleLineAddresses("CLIENT", "ADDRESS", "ADDRESS_STREET", "ADDRESS_CITY");
+        dropColumn("CLIENT", "ADDRESS");
+        splitSingleLineAddresses("COMPANY_SETTINGS", "COMPANY_ADDRESS",
+                "COMPANY_ADDRESS_STREET", "COMPANY_ADDRESS_CITY");
+        dropColumn("COMPANY_SETTINGS", "COMPANY_ADDRESS");
+
         // Emails now go to clients as well as manufacturers, so a sent email records which side it went
         // to and snapshots the partner's name under a neutral column. Every row written before this was
         // a manufacturer send, so the backfill is exact rather than a guess - and the old column has to
@@ -135,6 +147,15 @@ public class SchemaMigrations implements CommandLineRunner {
         // column", and the cost of keeping it is one no-op lookup per boot.
         widenEnumCheck("SENT_EMAIL", "RECIPIENT_TYPE", EmailRecipientType.class);
         widenEnumCheck("SCHEDULED_EMAIL", "STATUS", ScheduledEmailStatus.class);
+        // Credit notes added InvoiceType.CREDIT and InvoicePaymentStatus.CREDITED. Both columns predate
+        // them, so without these two lines issuing a credit note is rejected by the database - and the
+        // 23514 surfaces as "this action conflicts with existing data", which points nowhere near it.
+        widenEnumCheck("INVOICE", "TYPE", InvoiceType.class);
+        widenEnumCheck("INVOICE", "STATUS", InvoicePaymentStatus.class);
+        // AuthProvider gained MICROSOFT after the column already existed with only LOCAL/GOOGLE in its
+        // constraint - without this, the very first Microsoft sign-in on an existing database 409s trying
+        // to write it.
+        widenEnumCheck("APP_USER", "AUTH_PROVIDER", com.example.skladdo.model.AuthProvider.class);
 
         // Deleting a user releases its email address so the same person can be invited back. Accounts
         // retired by the build before that rule are still sitting on theirs, which is exactly the state
@@ -227,6 +248,61 @@ public class SchemaMigrations implements CommandLineRunner {
             }
         } catch (Exception e) {
             log.warn("Could not migrate CLIENT.CONTACT_PERSON into PARTNER_CONTACT: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Divides a single-line postal address into its street and city columns, in SQL so the whole table is
+     * done in one statement.
+     *
+     * <p>The last comma is the boundary, matching {@link com.example.skladdo.model.PostalAddress#parseLegacy}:
+     * {@code "Ravi 18, 10138 Tallinn"} splits as expected, while a line with no comma cannot be divided
+     * honestly and becomes the street alone. That leaves such a record without the city the e-invoice
+     * needs, which is the correct outcome - it is genuinely not known, and the user is asked for it the
+     * next time they edit the record rather than having a guess filed under their name.</p>
+     *
+     * <p>Guarded on the target being empty, so a second boot finds nothing to do and an address edited
+     * since the split is never overwritten by the stale line.</p>
+     */
+    private void splitSingleLineAddresses(String table, String legacyColumn, String streetColumn, String cityColumn) {
+        try {
+            if (!columnExists(table, legacyColumn)
+                    || !columnExists(table, streetColumn)
+                    || !columnExists(table, cityColumn)) {
+                return; // Either already migrated, or the entity is not yet applied to this schema.
+            }
+            // The comma's offset from the end locates the boundary; it is computed once in the CTE and
+            // then used by both columns. "divisible" is the guard that keeps the split honest: the comma
+            // must have text on both sides, so a line with none (or a leading/trailing comma) falls
+            // through to the street unchanged, exactly as PostalAddress.parseLegacy does in Java.
+            int split = jdbc.update("""
+                    WITH parsed AS (
+                        SELECT ID,
+                               TRIM(%s) AS full_line,
+                               POSITION(',' IN REVERSE(TRIM(%s))) AS comma_from_end
+                        FROM %s
+                        WHERE %s IS NOT NULL AND TRIM(%s) <> ''
+                          AND %s IS NULL AND %s IS NULL
+                    )
+                    UPDATE %s t SET
+                        %s = CASE WHEN p.comma_from_end > 1 AND p.comma_from_end < LENGTH(p.full_line)
+                                  THEN TRIM(LEFT(p.full_line, LENGTH(p.full_line) - p.comma_from_end))
+                                  ELSE p.full_line END,
+                        %s = CASE WHEN p.comma_from_end > 1 AND p.comma_from_end < LENGTH(p.full_line)
+                                  THEN TRIM(RIGHT(p.full_line, p.comma_from_end - 1))
+                                  ELSE NULL END
+                    FROM parsed p
+                    WHERE t.ID = p.ID
+                    """.formatted(
+                    legacyColumn, legacyColumn, table,
+                    legacyColumn, legacyColumn, streetColumn, cityColumn,
+                    table, streetColumn, cityColumn));
+            if (split > 0) {
+                log.info("Split {} single-line address(es) in {} into {} / {}.",
+                        split, table, streetColumn, cityColumn);
+            }
+        } catch (Exception e) {
+            log.warn("Could not split {}.{} into street/city: {}", table, legacyColumn, e.getMessage());
         }
     }
 

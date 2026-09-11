@@ -112,6 +112,28 @@ public class Invoice {
     /** Amount deducted for {@link #appliedPrepaymentInvoice}, frozen at generation time. Null when none. */
     private BigDecimal appliedPrepaymentAmount;
 
+    // --- Credit note -----------------------------------------------------------------------------
+
+    /**
+     * For a {@link InvoiceType#CREDIT} invoice, the already-issued invoice it reverses. Null on every
+     * other type. The reversed invoice is left in place and moved to {@link InvoicePaymentStatus#CREDITED}
+     * - it stays in the books, which is the whole difference between crediting and voiding.
+     */
+    @ManyToOne
+    @JoinColumn(name = "credited_invoice_id")
+    private Invoice creditedInvoice;
+
+    /**
+     * How much of this invoice has been reversed by credit notes so far. Maintained as credit notes are
+     * issued and voided rather than summed on read, so the figure every balance depends on is a field
+     * access. Null on rows that predate credit notes, read as zero.
+     *
+     * <p>A credit note need not cover the whole invoice - crediting two of five returned items leaves the
+     * rest genuinely owed - so this accumulates and only reaching {@link #totalAmount} moves the invoice
+     * to {@link InvoicePaymentStatus#CREDITED}.</p>
+     */
+    private BigDecimal creditedAmount;
+
     // --- Payment --------------------------------------------------------------------------------
 
     private LocalDate paidDate;
@@ -127,9 +149,34 @@ public class Invoice {
 
     private String clientName;
 
+    /**
+     * The buyer's address as one printable line, as shown on the PDF. Still stored rather than composed
+     * from the parts below, because invoices issued before the address was split apart have only this -
+     * it is the frozen text that was actually printed, and re-deriving it would blank them out.
+     */
     private String clientAddress;
 
+    /** Buyer address in parts, snapshotted for the e-invoice. Null on invoices issued before the split. */
+    private String clientAddressStreet;
+
+    private String clientAddressCity;
+
+    @Column(length = 10)
+    private String clientAddressPostalCode;
+
+    private String clientCountry;
+
     private String clientRegistrationCode;
+
+    /** Buyer's VAT id, snapshotted for the e-invoice XML's {@code BuyerParty/VATRegNumber}. */
+    private String clientVatNumber;
+
+    /**
+     * Buyer's department identifier, snapshotted for the e-invoice XML's {@code BuyerParty/DepId}. Frozen
+     * with the rest of the buyer block: a client that later changes (or drops) its department code must not
+     * retroactively alter an invoice already sent under the old one.
+     */
+    private String clientDepartmentId;
 
     private String clientEmail;
 

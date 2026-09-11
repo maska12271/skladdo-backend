@@ -13,5 +13,14 @@ package com.example.skladdo.model;
 public enum InvoicePaymentStatus {
     UNPAID,
     PAID,
-    VOID
+    VOID,
+
+    /**
+     * Reversed by a credit note. Distinct from {@link #VOID}: a voided invoice is one that never counted
+     * and whose order is freed to be invoiced afresh, while a credited one was genuinely issued, stays in
+     * the books, and is settled by the credit note rather than by payment. Nothing is owed on it and no
+     * penalty accrues, which is why it is a status rather than a flag - every roll-up already keys off
+     * "not UNPAID" to mean "nothing more to collect".
+     */
+    CREDITED
 }

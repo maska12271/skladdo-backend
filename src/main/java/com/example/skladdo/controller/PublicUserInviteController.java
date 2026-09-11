@@ -1,11 +1,13 @@
 package com.example.skladdo.controller;
 
 import com.example.skladdo.dto.AcceptGoogleUserInviteRequest;
+import com.example.skladdo.dto.AcceptMicrosoftUserInviteRequest;
 import com.example.skladdo.dto.AcceptUserInviteRequest;
 import com.example.skladdo.dto.PublicUserInviteDto;
 import com.example.skladdo.exception.BadRequestException;
 import com.example.skladdo.security.ExternalIdentity;
 import com.example.skladdo.security.GoogleIdTokenVerifier;
+import com.example.skladdo.security.MicrosoftIdTokenVerifier;
 import com.example.skladdo.service.UserInviteService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -29,11 +31,14 @@ public class PublicUserInviteController {
 
     private final UserInviteService userInviteService;
     private final GoogleIdTokenVerifier googleVerifier;
+    private final MicrosoftIdTokenVerifier microsoftVerifier;
 
     public PublicUserInviteController(UserInviteService userInviteService,
-                                      GoogleIdTokenVerifier googleVerifier) {
+                                      GoogleIdTokenVerifier googleVerifier,
+                                      MicrosoftIdTokenVerifier microsoftVerifier) {
         this.userInviteService = userInviteService;
         this.googleVerifier = googleVerifier;
+        this.microsoftVerifier = microsoftVerifier;
     }
 
     /** Who is inviting, and until when. Always 200 - an unknown token is not an error. */
@@ -66,6 +71,19 @@ public class PublicUserInviteController {
             throw new BadRequestException("error.auth.google.emailUnverified");
         }
         return Map.of("companyName", userInviteService.acceptWithGoogle(
+                request.token(), identity, request.birthDate(), request.avatarImage()));
+    }
+
+    /**
+     * The same, for an invitee who signs up with Microsoft. No email-verified check here, unlike the
+     * Google sibling above: this endpoint never looks an existing account up by email (the invitation
+     * token is what admits someone), so Microsoft's weaker guarantee on that claim - see
+     * {@link MicrosoftIdTokenVerifier} - has nothing to protect against here.
+     */
+    @PostMapping("/microsoft")
+    public Map<String, String> acceptWithMicrosoft(@Valid @RequestBody AcceptMicrosoftUserInviteRequest request) {
+        ExternalIdentity identity = microsoftVerifier.verify(request.idToken());
+        return Map.of("companyName", userInviteService.acceptWithMicrosoft(
                 request.token(), identity, request.birthDate(), request.avatarImage()));
     }
 }

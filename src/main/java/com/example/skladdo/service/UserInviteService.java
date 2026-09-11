@@ -256,12 +256,32 @@ public class UserInviteService {
      */
     public String acceptWithGoogle(String token, ExternalIdentity identity,
                                    java.time.LocalDate birthDate, String avatarImage) {
+        return acceptWithExternalIdentity(token, identity, birthDate, avatarImage,
+                AuthProvider.GOOGLE, "error.register.googleAccountTaken");
+    }
+
+    /**
+     * The same redemption, for an invitee who proves who they are with Microsoft instead. See
+     * {@link #acceptWithGoogle}, whose reasoning is identical here - Microsoft's weaker email guarantee
+     * (see {@code MicrosoftIdTokenVerifier}) does not matter to this method, because it never looks an
+     * existing account up by email in the first place: the invitation token is what admits someone here,
+     * not a matching address.
+     */
+    public String acceptWithMicrosoft(String token, ExternalIdentity identity,
+                                      java.time.LocalDate birthDate, String avatarImage) {
+        return acceptWithExternalIdentity(token, identity, birthDate, avatarImage,
+                AuthProvider.MICROSOFT, "error.register.microsoftAccountTaken");
+    }
+
+    private String acceptWithExternalIdentity(String token, ExternalIdentity identity,
+                                              java.time.LocalDate birthDate, String avatarImage,
+                                              AuthProvider provider, String alreadyTakenMessageKey) {
         UserInvite invite = requireRedeemable(token);
 
         // Refused before the invitation is claimed, so a link is not burnt on an account that cannot be
         // created: the unique index on external_auth_id would otherwise fail this as a server error.
         if (userRepository.findByExternalAuthId(identity.subject()).isPresent()) {
-            throw new BadRequestException("error.register.googleAccountTaken");
+            throw new BadRequestException(alreadyTakenMessageKey);
         }
 
         AcceptUserInviteRequest delegate = new AcceptUserInviteRequest(
@@ -269,14 +289,14 @@ public class UserInviteService {
                 identity.displayName(),
                 identity.email(),
                 birthDate,
-                // Satisfies the NOT NULL password column with something nobody can present; AuthProvider
-                // .GOOGLE below is what makes the account unreachable by password rather than merely
-                // unguessable. Same trick the admin-created account uses.
+                // Satisfies the NOT NULL password column with something nobody can present; the provider
+                // below is what makes the account unreachable by password rather than merely unguessable.
+                // Same trick the admin-created account uses.
                 java.util.UUID.randomUUID().toString(),
                 avatarImage);
 
         return TenantContext.callAs(invite.getCompanyId(),
-                () -> createAccountFor(invite, delegate, AuthProvider.GOOGLE, identity.subject()));
+                () -> createAccountFor(invite, delegate, provider, identity.subject()));
     }
 
     private UserInvite requireRedeemable(String token) {
