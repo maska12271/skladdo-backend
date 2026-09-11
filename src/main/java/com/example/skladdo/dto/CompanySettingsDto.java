@@ -37,8 +37,13 @@ public record CompanySettingsDto(
         @NotNull PenaltyPeriod penaltyPeriod,
         @NotNull @DecimalMin("0.0") BigDecimal defaultPrepaymentPercent,
 
-        // Seller details printed on the invoice header (all optional).
-        String companyAddress,
+        // Seller details printed on the invoice header (all optional). The address is sent in parts - the
+        // e-invoice needs the street and city separately - while the entity still exposes a composed
+        // `companyAddress` for display.
+        String companyAddressStreet,
+        String companyAddressCity,
+        String companyAddressPostalCode,
+        String companyCountry,
         String companyEmail,
         String companyPhone,
         String vatNumber,
@@ -93,7 +98,10 @@ public record CompanySettingsDto(
                 s.getLatePaymentPenaltyPercent(),
                 s.getPenaltyPeriod(),
                 s.getDefaultPrepaymentPercent(),
-                s.getCompanyAddress(),
+                s.getCompanyAddressStreet(),
+                s.getCompanyAddressCity(),
+                s.getCompanyAddressPostalCode(),
+                s.getCompanyCountry(),
                 s.getCompanyEmail(),
                 s.getCompanyPhone(),
                 s.getVatNumber(),
@@ -150,7 +158,10 @@ public record CompanySettingsDto(
         s.setLatePaymentPenaltyPercent(latePaymentPenaltyPercent);
         s.setPenaltyPeriod(penaltyPeriod);
         s.setDefaultPrepaymentPercent(defaultPrepaymentPercent);
-        s.setCompanyAddress(companyAddress);
+        s.setCompanyAddressStreet(companyAddressStreet);
+        s.setCompanyAddressCity(companyAddressCity);
+        s.setCompanyAddressPostalCode(companyAddressPostalCode);
+        s.setCompanyCountry(companyCountry);
         s.setCompanyEmail(companyEmail);
         s.setCompanyPhone(companyPhone);
         s.setVatNumber(vatNumber);

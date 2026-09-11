@@ -103,7 +103,7 @@ public class AuthService {
         // An account with no password of its own cannot fail this any way but confusingly: its placeholder
         // hash guarantees "wrong password", for a password they were never asked to choose.
         if (account.usesExternalIdentity()) {
-            throw new BadRequestException("error.auth.useGoogleSignIn");
+            throw new BadRequestException("error.auth.useProviderSignIn", account.getAuthProviderOrLocal().displayName());
         }
 
         assertCompanyNotSuspended(account);

@@ -70,7 +70,12 @@ public class AddressLookupService {
                 if (address == null || !seen.add(address)) {
                     continue;
                 }
-                out.add(new AddressSuggestionDto(address, blankToNull(p.path("postcode").asText(""))));
+                out.add(new AddressSuggestionDto(
+                        address,
+                        blankToNull(p.path("postcode").asText("")),
+                        blankToNull(streetLine(p)),
+                        blankToNull(city(p)),
+                        blankToNull(p.path("country").asText(""))));
             }
             return out;
         } catch (Exception e) {
@@ -84,22 +89,8 @@ public class AddressLookupService {
      * "Tartu maantee 1, 10145 Tallinn, Estonia". Returns {@code null} when there is nothing usable.
      */
     private static String formatAddress(JsonNode p) {
-        String street = p.path("street").asText("");
-        String houseNumber = p.path("housenumber").asText("");
-        String name = p.path("name").asText("");
-
-        String line1;
-        if (!street.isBlank()) {
-            line1 = houseNumber.isBlank() ? street : street + " " + houseNumber;
-        } else {
-            line1 = name; // POI / place with no street (e.g. a town or landmark)
-        }
-
-        String city = firstNonBlank(
-                p.path("city").asText(""),
-                p.path("district").asText(""),
-                p.path("county").asText(""),
-                p.path("state").asText(""));
+        String line1 = streetLine(p);
+        String city = city(p);
         String postcode = p.path("postcode").asText("");
         String country = p.path("country").asText("");
 
@@ -117,6 +108,25 @@ public class AddressLookupService {
             parts.add(country.trim());
         }
         return parts.isEmpty() ? null : String.join(", ", parts);
+    }
+
+    /** Street and house number as one line, falling back to the feature's name for a POI with no street. */
+    private static String streetLine(JsonNode p) {
+        String street = p.path("street").asText("");
+        String houseNumber = p.path("housenumber").asText("");
+        if (!street.isBlank()) {
+            return houseNumber.isBlank() ? street : street + " " + houseNumber;
+        }
+        return p.path("name").asText(""); // POI / place with no street (e.g. a town or landmark)
+    }
+
+    /** The most specific place name the provider gives, narrowing outwards until something is set. */
+    private static String city(JsonNode p) {
+        return firstNonBlank(
+                p.path("city").asText(""),
+                p.path("district").asText(""),
+                p.path("county").asText(""),
+                p.path("state").asText(""));
     }
 
     private static String firstNonBlank(String... values) {

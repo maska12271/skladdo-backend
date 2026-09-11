@@ -49,6 +49,11 @@ public record InvoiceDetailsDto(
         BigDecimal appliedPrepaymentAmount,
         String appliedPrepaymentNumber,
 
+        // For a CREDIT invoice, the number of the invoice it reverses (null on every other type).
+        String creditedInvoiceNumber,
+        // How much of this invoice has been reversed by credit notes so far (zero when none have been).
+        BigDecimal creditedAmount,
+
         String notes,
         List<Line> items,
 
@@ -56,6 +61,8 @@ public record InvoiceDetailsDto(
         Instant updatedAt
 ) {
     public record Line(
+            /** The invoice line's own id, which a partial credit note names to say what it is crediting. */
+            Long id,
             Long productId,
             String productName,
             String sku,

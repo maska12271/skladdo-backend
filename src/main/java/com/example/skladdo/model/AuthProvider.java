@@ -23,5 +23,28 @@ public enum AuthProvider {
      * placeholder, the same trick an invited-but-not-yet-activated account uses. Setting a password later
      * (through the ordinary reset link) turns the account back into a {@link #LOCAL} one.
      */
-    GOOGLE
+    GOOGLE,
+
+    /**
+     * Signs in through Microsoft (a personal Microsoft account or a work/school Entra account). Same
+     * placeholder-password mechanics as {@link #GOOGLE}.
+     *
+     * <p>Deliberately trusted less than Google in one specific way: Microsoft's ID token carries no
+     * {@code email_verified} claim, and Microsoft's own documentation warns its {@code email} claim "isn't
+     * guaranteed to be correct" and must never be used for authorization - unlike a Google account, an
+     * Entra tenant can assign a user almost any string as their {@code mail} attribute with no proof
+     * anyone can receive mail there. So {@code MicrosoftAuthService}, unlike {@code GoogleAuthService},
+     * never links a Microsoft identity to an existing account by matching email - only by an id already on
+     * file - to avoid a spoofed address being used to take over someone else's account.</p>
+     */
+    MICROSOFT;
+
+    /** Shown to the person, e.g. "This account signs in with {@code displayName()}." */
+    public String displayName() {
+        return switch (this) {
+            case LOCAL -> "password";
+            case GOOGLE -> "Google";
+            case MICROSOFT -> "Microsoft";
+        };
+    }
 }

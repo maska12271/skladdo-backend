@@ -1,5 +1,7 @@
 package com.example.skladdo.controller;
 
+import com.example.skladdo.dto.CreateCreditNoteRequest;
+import com.example.skladdo.dto.EInvoiceIssueDto;
 import com.example.skladdo.dto.InvoiceDetailsDto;
 import com.example.skladdo.dto.InvoiceSummaryDto;
 import com.example.skladdo.dto.UpdateInvoicePaymentRequest;
@@ -20,6 +22,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/invoices")
@@ -67,10 +70,47 @@ public class InvoiceController {
                 .body(new ByteArrayResource(pdf));
     }
 
+    /**
+     * The invoice as an Estonian e-invoice ("e-arve") XML file, for import into the buyer's accounting
+     * system or upload to an e-invoice operator. Downloaded as an attachment - unlike the PDF there is
+     * nothing useful to show inline.
+     */
+    @GetMapping("/{id}/e-invoice")
+    @PreAuthorize("@perm.canView(authentication, 'INVOICES')")
+    public ResponseEntity<ByteArrayResource> getEInvoice(@PathVariable Long id) {
+        byte[] xml = invoiceService.getEInvoiceXml(id);
+        String filename = "e-arve-" + invoiceService.getInvoiceNumber(id) + ".xml";
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_XML)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .body(new ByteArrayResource(xml));
+    }
+
+    /**
+     * What the invoice is missing for a clean e-invoice export, so the user sees it before downloading
+     * rather than after the buyer rejects the file. An empty list means it exports cleanly.
+     */
+    @GetMapping("/{id}/e-invoice/readiness")
+    @PreAuthorize("@perm.canView(authentication, 'INVOICES')")
+    public List<EInvoiceIssueDto> getEInvoiceReadiness(@PathVariable Long id) {
+        return invoiceService.getEInvoiceReadiness(id);
+    }
+
     @PatchMapping("/{id}/payment")
     @PreAuthorize("@perm.canEdit(authentication, 'INVOICES')")
     public InvoiceDetailsDto updatePayment(@PathVariable Long id, @Valid @RequestBody UpdateInvoicePaymentRequest request) {
         return invoiceService.updatePaymentStatus(id, request);
+    }
+
+    /**
+     * Issues a credit note reversing this invoice. The correction path for an invoice the customer has
+     * already received - voiding is for one that should never have counted.
+     */
+    @PostMapping("/{id}/credit-note")
+    @PreAuthorize("@perm.canCreate(authentication, 'INVOICES')")
+    public InvoiceDetailsDto createCreditNote(@PathVariable Long id,
+                                              @Valid @RequestBody CreateCreditNoteRequest request) {
+        return invoiceService.createCreditNote(id, request);
     }
 
     @PatchMapping("/{id}/void")
